@@ -105,8 +105,7 @@ impl WebSearcher {
         let mut req = self
             .client
             .get(&url)
-            .header("Accept", "application/json")
-            .header("X-Respond-With", "no-content");
+            .header("Accept", "application/json");
 
         if !api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", api_key));
