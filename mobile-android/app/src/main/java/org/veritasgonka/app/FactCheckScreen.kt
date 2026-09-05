@@ -78,7 +78,8 @@ fun FactCheckScreen(repository: GonkaRepository = remember { GonkaRepository() }
                 val override = videoDialogueOverride.trim().ifBlank { null }
                 result = repository.verifyClaim(input, videoDialogueOverride = override)
             } catch (e: Exception) {
-                errorMessage = "Rate limit or network issue. Please wait a moment and try again."
+                errorMessage = e.message?.ifBlank { null }
+                    ?: "Network issue or timeout. Please wait a moment and try again."
             } finally {
                 isLoading = false
                 cooldownSeconds = 5
