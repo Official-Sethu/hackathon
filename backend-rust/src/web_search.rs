@@ -98,9 +98,9 @@ impl WebSearcher {
             .collect::<String>()
             .split_whitespace()
             .collect::<Vec<_>>()
-            .join("+");
+            .join("%20");
 
-        let url = format!("https://s.jina.ai/?q={}", encoded_query);
+        let url = format!("https://s.jina.ai/{}", encoded_query);
 
         let mut req = self
             .client
