@@ -3,6 +3,7 @@ mod gonka_client;
 mod models;
 mod rate_limiter;
 mod video_parser;
+mod web_search;
 
 use axum::{
     extract::{ConnectInfo, Json, State},
@@ -16,6 +17,7 @@ use gonka_client::GonkaClient;
 use models::{HealthResponse, VerifyRequest, VerifyVideoRequest};
 use video_parser::VideoParser;
 use rate_limiter::RateLimiter;
+use web_search::WebSearcher;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -23,6 +25,7 @@ use tracing::{info, warn};
 
 struct AppState {
     gonka_client: GonkaClient,
+    web_searcher: WebSearcher,
     rate_limiter: RateLimiter,
     key_pool: Vec<String>,
 }
@@ -61,6 +64,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         gonka_client: GonkaClient::new(),
+        web_searcher: WebSearcher::new(),
         rate_limiter: RateLimiter::new(max_req, window_secs),
         key_pool,
     });
@@ -197,27 +201,36 @@ async fn verify_claim_handler(
         .or_else(|| state.key_pool.get(2).map(|s| s.as_str()))
         .or(key1);
 
-    // 4. Concurrent dispatch to 3 distinct Gonka-routed models using tokio::join!
+    // 4. Fetch real-time web search results to ground the AI verdict in live evidence
+    let search_context = state.web_searcher.search_for_claim(claim).await;
+    let search_ctx = Some(search_context.as_str());
+    info!("Web search completed for claim — {} bytes of context", search_context.len());
+
+    // 5. Concurrent dispatch to 3 distinct Gonka-routed models using tokio::join!
     //    DeepSeek  — causal & logical analysis
     //    MiniMax   — source attribution & news context
     //    Kimi-K2   — temporal cross-referencing & bias detection
+    //    All three receive the same live search results as primary evidence.
     let (res1, res2, res3) = tokio::join!(
         state.gonka_client.query_model(
             "deepseek-ai/DeepSeek-V4-Flash-0731",
-            "Causal reasoning and logical fallacy analysis engine. Apply formal logic to evaluate the claim.",
+            "Causal reasoning and logical fallacy analysis engine. Apply formal logic to evaluate the claim against the search evidence.",
             claim,
+            search_ctx,
             key1
         ),
         state.gonka_client.query_model(
             "MiniMaxAI/MiniMax-M2.7",
-            "Source attribution and news context verification engine. Cross-reference the claim against known news outlets and public records.",
+            "Source attribution and news context verification engine. Cross-reference the claim and search results against known news outlets and public records.",
             claim,
+            search_ctx,
             key2
         ),
         state.gonka_client.query_model(
             "moonshotai/Kimi-K2",
-            "Temporal cross-referencing and bias detection engine. Identify recency flags, narrative framing, and ideological bias in the claim.",
+            "Temporal cross-referencing and bias detection engine. Evaluate the search evidence for recency, narrative framing, and ideological bias.",
             claim,
+            search_ctx,
             key3
         )
     );

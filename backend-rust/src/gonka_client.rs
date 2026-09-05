@@ -25,12 +25,14 @@ impl GonkaClient {
         format!("gonka-{}-{}", model_prefix, id_suffix)
     }
 
-    /// Queries a specific model routed through Gonka Router and parses its AI reasoning dynamically
+    /// Queries a specific model routed through Gonka Router.
+    /// Accepts optional real-time web search context to ground the verdict in live evidence.
     pub async fn query_model(
         &self,
         model_name: &str,
         system_role: &str,
         claim: &str,
+        search_context: Option<&str>,
         api_key: Option<&str>,
     ) -> Result<ModelResult, String> {
         let start = Instant::now();
@@ -57,65 +59,60 @@ impl GonkaClient {
             Break the claim into atomic, individually verifiable sub-claims. List each one explicitly.\n\
             \n\
             STEP 2 — EVIDENCE ASSESSMENT\n\
-            For each sub-claim, clearly state what you know from verifiable sources, what you are inferring, \
-            and what you cannot confirm. Apply this critical rule:\n\
-            ABSENCE FROM TRAINING DATA IS NOT EVIDENCE OF FABRICATION.\n\
-            Many real events — especially recent aviation displays, sporting ceremonies, stadium flyovers, \
-            and military demonstrations — are not individually catalogued in AI training data. \
-            Not finding a specific event in your training set does NOT mean it did not happen.\n\
+            You will be given REAL-TIME WEB SEARCH RESULTS in the user message. \
+            These are live web results fetched specifically for this claim — treat them as your PRIMARY evidence source. \
+            For each sub-claim, state what the search results confirm, what they contradict, and what they do not address.\n\
             \n\
-            STEP 3 — PLAUSIBILITY SCORING (critical step)\n\
-            Before scoring, assess plausibility on two axes:\n\
-            A) EVENT TYPE PLAUSIBILITY: Is this the kind of event that happens in the real world? \
-               Passenger jet flyovers at stadiums, low-altitude military and civilian demonstration flights, \
-               South African Airways heritage flights, and similar aviation displays are well-documented \
-               categories of real events globally. If the event type is physically possible and has real-world precedent, \
-               it must NOT be scored as fabricated simply because you lack this specific instance in training data.\n\
-            B) SOURCE CREDIBILITY: Is the attributed source (9News, Reuters, BBC, AP, local TV stations) \
-               a real, credible news organisation? If yes, and if the event type is plausible, \
-               the claim should score at minimum in the UNSUBSTANTIATED / NUANCED range (40-64) \
-               unless you have direct contradicting evidence.\n\
-            Score guide for plausible + credible-source claims you cannot independently confirm:\n\
-            - Plausible event type + real credible outlet cited = 55-75 (UNSUBSTANTIATED / NUANCED leaning VERIFIED)\n\
-            - Plausible event type + no source cited = 40-55 (UNSUBSTANTIATED / NUANCED)\n\
-            - Implausible/physically impossible event = 0-30 regardless of source\n\
-            - Directly contradicted by evidence = 0-20 (FABRICATED OR DEBUNKED)\n\
+            STEP 3 — RECENCY CHECK\n\
+            Flag any temporal uncertainty. If search results include recent sources, use them. \
+            Do NOT fabricate facts not present in the search results or your verified training knowledge.\n\
             \n\
-            STEP 4 — RECENCY CHECK\n\
-            If the claim involves a recent event, flag uncertainty and lower your confidence score. \
-            Do NOT fabricate post-training-cutoff facts. Recency reduces confidence, not truthScore itself \
-            unless you have direct contradicting evidence.\n\
-            \n\
-            STEP 5 — BIAS AND FRAMING AUDIT\n\
+            STEP 4 — BIAS AND FRAMING AUDIT\n\
             Identify logical fallacies, misleading framing, cherry-picked statistics, or emotional manipulation.\n\
             \n\
-            STEP 6 — ANTI-HALLUCINATION SELF-AUDIT\n\
-            Remove anything you cannot verify. But do NOT mark real-world plausible events as fabricated \
-            merely because you lack training data on that specific instance.\n\
+            STEP 5 — ANTI-HALLUCINATION SELF-AUDIT\n\
+            Before scoring, ask: am I asserting anything not supported by the search results or verified training data? \
+            If yes, remove it. Do not invent sources, URLs, or quotes.\n\
             \n\
-            STEP 7 — FINAL SCORE AND OUTPUT\n\
-            Assign truthScore 0-100. Emit ONLY the raw JSON object. No markdown fences. No preamble.\n\
+            STEP 6 — SCORE AND VERDICT\n\
+            Assign truthScore 0-100 based strictly on evidence weight from search results and training knowledge:\n\
+            - 85-100: Search results and/or training data confirm the claim as-stated\n\
+            - 65-84: Mostly confirmed with minor gaps or unverified details\n\
+            - 40-64: Partially supported, significantly misleading, or evidence is mixed\n\
+            - 15-39: Mostly contradicted or based on a false premise\n\
+            - 0-14: Directly debunked by evidence or physically impossible\n\
+            \n\
+            STEP 7 — OUTPUT\n\
+            Emit ONLY the raw JSON object below. No markdown fences. No preamble.\n\
             \n\
             {{\n\
               \"truthScore\": <integer 0-100>,\n\
               \"verdict\": \"<VERIFIED FACTUAL & AUTHENTIC | UNSUBSTANTIATED / NUANCED | FABRICATED OR DEBUNKED>\",\n\
-              \"headline\": \"<one precise sentence: what is claimed and whether it is substantiated>\",\n\
-              \"summary\": \"<2-3 sentences of factual explanation grounded in evidence>\",\n\
-              \"assessment\": \"<your full model-specific evaluation referencing the steps above>\",\n\
-              \"confidence\": <integer 0-100, lower when recency-flagged or event not in training data>,\n\
+              \"headline\": \"<one precise sentence: what is claimed and what the evidence shows>\",\n\
+              \"summary\": \"<2-3 sentences grounded in the search results and evidence>\",\n\
+              \"assessment\": \"<full evaluation citing specific search results or training knowledge used>\",\n\
+              \"confidence\": <integer 0-100, lower when evidence is sparse or contradictory>,\n\
               \"stance\": \"<Verified True | Partially Accurate | Needs Clarification | False>\",\n\
-              \"fallacies\": [\"<detected fallacy or empty array if none>\"],\n\
-              \"citations\": [{{\"title\": \"<source name>\", \"url\": \"<real url>\"}}],\n\
+              \"fallacies\": [\"<detected fallacy, or empty array if none>\"],\n\
+              \"citations\": [{{\"title\": \"<source name from search results>\", \"url\": \"<url from search results>\"}}],\n\
               \"reasoningSteps\": [\n\
                 {{\"title\": \"Claim Decomposition\", \"desc\": \"<sub-claims identified>\"}},\n\
-                {{\"title\": \"Plausibility & Evidence Assessment\", \"desc\": \"<event type plausibility + what is known vs inferred>\"}},\n\
-                {{\"title\": \"Recency & Bias Audit\", \"desc\": \"<recency flags and framing issues>\"}},\n\
-                {{\"title\": \"Anti-Hallucination Check\", \"desc\": \"<what was removed or flagged>\"}},\n\
-                {{\"title\": \"Final Scoring Rationale\", \"desc\": \"<why this specific score was assigned>\"}}\n\
+                {{\"title\": \"Search Evidence Assessment\", \"desc\": \"<what search results confirm, contradict, or omit>\"}},\n\
+                {{\"title\": \"Recency & Bias Audit\", \"desc\": \"<temporal flags and framing issues>\"}},\n\
+                {{\"title\": \"Anti-Hallucination Check\", \"desc\": \"<assertions removed for lack of evidence>\"}},\n\
+                {{\"title\": \"Final Scoring Rationale\", \"desc\": \"<why this specific score based on evidence>\"}}\n\
               ]\n\
             }}",
             role = system_role
         );
+
+        // Build user message: prepend live search results if available
+        let user_message = match search_context {
+            Some(ctx) if !ctx.trim().is_empty() => {
+                format!("{}\n\n[CLAIM TO VERIFY]\n{}", ctx, claim)
+            }
+            _ => claim.to_string(),
+        };
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -127,7 +124,7 @@ impl GonkaClient {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": claim}
+                {"role": "user", "content": user_message}
             ],
             "temperature": 0.0,
             "max_tokens": 1800
@@ -165,7 +162,7 @@ impl GonkaClient {
                                     .trim()
                                     .to_string();
 
-                                // Extract JSON object from content in case there is preamble text
+                                // Extract JSON object — handles preamble text before the {
                                 let json_start = cleaned.find('{').unwrap_or(0);
                                 let json_end = cleaned.rfind('}').map(|i| i + 1).unwrap_or(cleaned.len());
                                 let json_slice = &cleaned[json_start..json_end];
