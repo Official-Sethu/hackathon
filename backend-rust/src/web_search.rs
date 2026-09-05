@@ -114,32 +114,42 @@ impl WebSearcher {
 
         match req.send().await {
             Ok(resp) if resp.status().is_success() => {
-                match resp.json::<JinaResponse>().await {
-                    Ok(jina) => {
-                        let items: Vec<JinaResult> = match jina.data {
-                            Some(serde_json::Value::Array(arr)) => {
-                                arr.into_iter().filter_map(|v| serde_json::from_value::<JinaResult>(v).ok()).collect()
-                            }
-                            Some(v) => serde_json::from_value::<JinaResult>(v).into_iter().collect(),
-                            None => Vec::new(),
-                        };
+                match resp.json::<serde_json::Value>().await {
+                    Ok(val) => {
+                        let mut results = Vec::new();
+                        let items = val.get("data")
+                            .and_then(|d| d.as_array())
+                            .cloned()
+                            .unwrap_or_default();
 
-                        items
-                            .into_iter()
-                            .filter_map(|r| {
-                                let title = r.title.filter(|t| !t.trim().is_empty())?;
-                                let url = r.url.filter(|u| !u.trim().is_empty())?;
-                                let snippet = r
-                                    .content
-                                    .or(r.description)
-                                    .or(r.snippet)
-                                    .unwrap_or_default()
-                                    .chars()
-                                    .take(400)
-                                    .collect::<String>();
-                                Some(SearchResult { title, url, snippet })
-                            })
-                            .collect()
+                        for item in items {
+                            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                            let description = item.get("description")
+                                .or_else(|| item.get("content"))
+                                .or_else(|| item.get("snippet"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .chars()
+                                .take(400)
+                                .collect::<String>();
+
+                            if !title.is_empty() && !url.is_empty() {
+                                results.push(SearchResult {
+                                    title,
+                                    url,
+                                    snippet: description,
+                                });
+                            }
+                        }
+
+                        if results.is_empty() {
+                            tracing::warn!("Jina AI search JSON contained no items, attempting DDG fallback");
+                            self.fetch_ddg(query).await
+                        } else {
+                            results
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("Jina AI search JSON parse failed: {}", e);
