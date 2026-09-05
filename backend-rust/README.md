@@ -31,7 +31,17 @@ The core asynchronous backend engine for VeritasGonka, providing high-throughput
 
 ---
 
-## Quickstart
+## Live Production Deployment
+
+The Rust backend is deployed live on Render:
+- **Live Base URL**: `https://trace-backend-7bbm.onrender.com`
+- **Health Check**: `https://trace-backend-7bbm.onrender.com/health`
+- **Verify Claim Endpoint**: `POST https://trace-backend-7bbm.onrender.com/api/verify`
+- **Verify Short Video Reel Endpoint**: `POST https://trace-backend-7bbm.onrender.com/api/verify_video`
+
+---
+
+## Quickstart (Local)
 
 ```bash
 # Navigate to backend directory
@@ -43,4 +53,4 @@ cargo run
 # Build optimized production binary
 cargo build --release
 ```
-Server runs on `http://localhost:8080`.
+Server runs on `http://localhost:8080` (or `https://trace-backend-7bbm.onrender.com` in production).

@@ -4,6 +4,7 @@
 **Slogan**: Follow The Claim. Find The Truth.  
 **Track**: AI for Society (AI Fact Checker)  
 **Live Demo**: Accessible via static host or opening `index.html`  
+**Live Rust Backend API**: `https://trace-backend-7bbm.onrender.com` (`/health`, `/api/verify`, `/api/verify_video`)  
 **GitHub Repository**: Self-contained repository in workspace root  
 **Routing Infrastructure**: Gonka Router (`https://gonkarouter.io/v1`)  
 

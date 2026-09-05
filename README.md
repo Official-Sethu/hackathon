@@ -141,13 +141,16 @@ xdg-open index.html
 
 ---
 
-### Option 2: Rust Axum Backend
+### Option 2: Rust Axum Backend (Live API & Local)
+- **Live Production Endpoint**: `https://trace-backend-7bbm.onrender.com`
+- **Local Dev Server**:
 ```bash
 cd backend-rust
 cargo run
 ```
-The Axum service starts on `http://localhost:8080` exposing:
+The Axum service starts on `http://localhost:8080` (or live on `https://trace-backend-7bbm.onrender.com`) exposing:
 - `POST /api/verify`: Dispatches parallel queries to Gonka Router and calculates Bayesian consensus.
+- `POST /api/verify_video`: Multi-tiered short video reel metadata scraper & LLM query feeder.
 - `GET /api/models`: Returns configured models and Gonka gateway status.
 - `GET /health`: Health and connectivity check.
 
