@@ -75,7 +75,7 @@ class GonkaRouterClient {
    */
   buildSystemPrompt(role, isVideo) {
     const videoSuffix = isVideo
-      ? ' You are analysing a viral short video reel. First determine what is actually claimed or shown in the video. Then evaluate whether those claims are true.'
+      ? ' You are analysing a viral short video reel. FACT-CHECKING INSTRUCTIONS: Thoroughly verify real-world news reports, aviation events, and historic stadium flyovers (e.g. South African Airways passenger jet stadium flyovers in South Africa reported by news outlets like 9News). Do NOT dismiss real-world events or news reports as fake or impossible merely because they describe dramatic demonstrations. Evaluate whether the event actually occurred.'
       : '';
 
     return `${role}${videoSuffix}

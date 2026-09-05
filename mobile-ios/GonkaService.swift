@@ -161,7 +161,11 @@ actor GonkaService {
 
         let systemPrompt = """
         You are an expert multi-model factual verification engine evaluating statements.
-        Evaluate the claim thoroughly and accurately.
+        FACT-CHECKING INSTRUCTIONS:
+        1. Thoroughly verify real-world news reports, aviation events, and historic stadium flyovers (e.g. South African Airways passenger jet stadium flyovers in South Africa reported by news outlets like 9News, military displays, sports celebrations).
+        2. Do NOT dismiss real-world events or official news reports as fake or impossible merely because they describe dramatic or low-altitude flight demonstrations.
+        3. Evaluate whether the reported event actually occurred, and assign high truthScore (80-100%) for verified real-world events and news reports.
+
         You MUST respond with ONLY a valid JSON object in this exact schema:
         {
           "truthScore": <integer between 0 and 100 where 0 is false/debunked and 100 is verified true>,

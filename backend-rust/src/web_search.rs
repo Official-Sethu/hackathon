@@ -36,12 +36,40 @@ impl WebSearcher {
         }
     }
 
+    /// Cleans and extracts a search query from a raw claim or text.
+    /// Strips out prompt brackets, system prefixes, and redundant quotes.
+    pub fn clean_query(raw_claim: &str) -> String {
+        let mut text = raw_claim.trim().to_string();
+
+        // 1. Strip bracketed system headers like [Viral TikTok Reel Audio...]:
+        if let Some(idx) = text.find("]:") {
+            text = text[idx + 2..].trim().to_string();
+        } else if let Some(idx) = text.find(']') {
+            if text.starts_with('[') {
+                text = text[idx + 1..].trim().to_string();
+            }
+        }
+
+        // 2. Remove leading/trailing quotes
+        text = text.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string();
+
+        // 3. If query is empty or too short, return fallback
+        if text.trim().len() < 3 {
+            return raw_claim.trim().to_string();
+        }
+
+        text
+    }
+
     /// Searches the web for real-time evidence about a claim.
     /// Returns the top results formatted as a context string for injection into the AI prompt.
     pub async fn search_for_claim(&self, claim: &str) -> String {
-        let results = self.fetch_jina(claim).await;
+        let cleaned = Self::clean_query(claim);
+        tracing::info!("[WebSearch] Executing Jina AI search for query: \"{}\"", cleaned);
+        let results = self.fetch_jina(&cleaned).await;
 
         if results.is_empty() {
+            tracing::warn!("[WebSearch] Jina AI returned no results for query: \"{}\"", cleaned);
             return String::from("[Web search returned no results. Proceed with training knowledge only and flag uncertainty accordingly.]");
         }
 
