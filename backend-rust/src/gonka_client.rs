@@ -57,37 +57,44 @@ impl GonkaClient {
             Break the claim into atomic, individually verifiable sub-claims. List each one explicitly.\n\
             \n\
             STEP 2 — EVIDENCE ASSESSMENT\n\
-            For each sub-claim, clearly state:\n\
-            - What you know from verifiable, real-world sources\n\
-            - What you are inferring or extrapolating\n\
-            - What you cannot confirm with certainty\n\
-            Historic events, stadium flyovers, aviation demonstrations, celebrity statements, \
-            and viral news events reported by multiple outlets (e.g. 9News, Reuters, BBC, AP) \
-            should be given high credibility unless directly contradicted by evidence.\n\
+            For each sub-claim, clearly state what you know from verifiable sources, what you are inferring, \
+            and what you cannot confirm. Apply this critical rule:\n\
+            ABSENCE FROM TRAINING DATA IS NOT EVIDENCE OF FABRICATION.\n\
+            Many real events — especially recent aviation displays, sporting ceremonies, stadium flyovers, \
+            and military demonstrations — are not individually catalogued in AI training data. \
+            Not finding a specific event in your training set does NOT mean it did not happen.\n\
             \n\
-            STEP 3 — RECENCY CHECK\n\
-            If the claim involves an event within the last 2 years, flag uncertainty and \
-            reduce your confidence score accordingly. Do NOT fabricate post-training-cutoff facts.\n\
+            STEP 3 — PLAUSIBILITY SCORING (critical step)\n\
+            Before scoring, assess plausibility on two axes:\n\
+            A) EVENT TYPE PLAUSIBILITY: Is this the kind of event that happens in the real world? \
+               Passenger jet flyovers at stadiums, low-altitude military and civilian demonstration flights, \
+               South African Airways heritage flights, and similar aviation displays are well-documented \
+               categories of real events globally. If the event type is physically possible and has real-world precedent, \
+               it must NOT be scored as fabricated simply because you lack this specific instance in training data.\n\
+            B) SOURCE CREDIBILITY: Is the attributed source (9News, Reuters, BBC, AP, local TV stations) \
+               a real, credible news organisation? If yes, and if the event type is plausible, \
+               the claim should score at minimum in the UNSUBSTANTIATED / NUANCED range (40-64) \
+               unless you have direct contradicting evidence.\n\
+            Score guide for plausible + credible-source claims you cannot independently confirm:\n\
+            - Plausible event type + real credible outlet cited = 55-75 (UNSUBSTANTIATED / NUANCED leaning VERIFIED)\n\
+            - Plausible event type + no source cited = 40-55 (UNSUBSTANTIATED / NUANCED)\n\
+            - Implausible/physically impossible event = 0-30 regardless of source\n\
+            - Directly contradicted by evidence = 0-20 (FABRICATED OR DEBUNKED)\n\
             \n\
-            STEP 4 — BIAS AND FRAMING AUDIT\n\
-            Identify any logical fallacies, misleading framing, cherry-picked statistics, \
-            or emotional manipulation in how the claim is worded.\n\
+            STEP 4 — RECENCY CHECK\n\
+            If the claim involves a recent event, flag uncertainty and lower your confidence score. \
+            Do NOT fabricate post-training-cutoff facts. Recency reduces confidence, not truthScore itself \
+            unless you have direct contradicting evidence.\n\
             \n\
-            STEP 5 — ANTI-HALLUCINATION SELF-AUDIT\n\
-            Before scoring, ask yourself: am I stating anything I cannot actually verify \
-            from known sources? If yes, remove that assertion and adjust your score downward. \
-            A lower truthScore with honest uncertainty is always better than a confident hallucination.\n\
+            STEP 5 — BIAS AND FRAMING AUDIT\n\
+            Identify logical fallacies, misleading framing, cherry-picked statistics, or emotional manipulation.\n\
             \n\
-            STEP 6 — SCORE AND VERDICT\n\
-            Assign truthScore 0-100 based strictly on evidence weight:\n\
-            - 85-100: Multiple credible sources confirm the claim as-stated\n\
-            - 65-84: Mostly accurate with minor inaccuracies or missing context\n\
-            - 40-64: Partially true, significantly misleading, or unverifiable\n\
-            - 15-39: Mostly false, distorted, or based on a false premise\n\
-            - 0-14: Demonstrably fabricated or directly debunked by evidence\n\
+            STEP 6 — ANTI-HALLUCINATION SELF-AUDIT\n\
+            Remove anything you cannot verify. But do NOT mark real-world plausible events as fabricated \
+            merely because you lack training data on that specific instance.\n\
             \n\
-            STEP 7 — OUTPUT\n\
-            Emit ONLY the raw JSON object below. No markdown fences. No preamble. No commentary outside the JSON.\n\
+            STEP 7 — FINAL SCORE AND OUTPUT\n\
+            Assign truthScore 0-100. Emit ONLY the raw JSON object. No markdown fences. No preamble.\n\
             \n\
             {{\n\
               \"truthScore\": <integer 0-100>,\n\
@@ -95,16 +102,16 @@ impl GonkaClient {
               \"headline\": \"<one precise sentence: what is claimed and whether it is substantiated>\",\n\
               \"summary\": \"<2-3 sentences of factual explanation grounded in evidence>\",\n\
               \"assessment\": \"<your full model-specific evaluation referencing the steps above>\",\n\
-              \"confidence\": <integer 0-100, reflect genuine uncertainty — lower when recency-flagged>,\n\
+              \"confidence\": <integer 0-100, lower when recency-flagged or event not in training data>,\n\
               \"stance\": \"<Verified True | Partially Accurate | Needs Clarification | False>\",\n\
-              \"fallacies\": [\"<detected fallacy or empty array>\"],\n\
+              \"fallacies\": [\"<detected fallacy or empty array if none>\"],\n\
               \"citations\": [{{\"title\": \"<source name>\", \"url\": \"<real url>\"}}],\n\
               \"reasoningSteps\": [\n\
                 {{\"title\": \"Claim Decomposition\", \"desc\": \"<sub-claims identified>\"}},\n\
-                {{\"title\": \"Evidence Assessment\", \"desc\": \"<what is known vs inferred>\"}},\n\
+                {{\"title\": \"Plausibility & Evidence Assessment\", \"desc\": \"<event type plausibility + what is known vs inferred>\"}},\n\
                 {{\"title\": \"Recency & Bias Audit\", \"desc\": \"<recency flags and framing issues>\"}},\n\
-                {{\"title\": \"Anti-Hallucination Check\", \"desc\": \"<what was removed or flagged as uncertain>\"}},\n\
-                {{\"title\": \"Final Scoring Rationale\", \"desc\": \"<why this score was assigned>\"}}\n\
+                {{\"title\": \"Anti-Hallucination Check\", \"desc\": \"<what was removed or flagged>\"}},\n\
+                {{\"title\": \"Final Scoring Rationale\", \"desc\": \"<why this specific score was assigned>\"}}\n\
               ]\n\
             }}",
             role = system_role
