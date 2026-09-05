@@ -260,19 +260,127 @@ async fn verify_video_handler(
     Json(payload): Json<VerifyVideoRequest>,
 ) -> Result<Json<models::VerificationResponse>, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
     let meta = VideoParser::extract_metadata(&payload.video_url).await;
-    let spoken_text = payload.spoken_transcript.unwrap_or(meta.spoken_transcript);
-    let claim_prompt = format!("[Viral {} Reel Audio & Spoken Captions]: \"{}\"", meta.platform, spoken_text);
 
-    let verify_req = VerifyRequest {
-        claim: claim_prompt,
-        is_url: Some(true),
-        api_key: payload.api_key,
+    // Use user-supplied transcript if provided; otherwise fall back to parsed metadata
+    let spoken_text = payload.spoken_transcript.clone().unwrap_or_else(|| meta.spoken_transcript.clone());
+
+    // Build a clean, focused search query directly from video metadata fields.
+    // This avoids passing bracketed system-prompt wrappers to Jina AI.
+    let search_query = {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(ref t) = meta.title {
+            if !t.is_empty() { parts.push(t.clone()); }
+        }
+        if let Some(ref a) = meta.author {
+            if !a.is_empty() { parts.push(a.clone()); }
+        }
+        parts.push(meta.platform.clone());
+        parts.join(" ")
     };
 
-    let Json(mut response) = verify_claim_handler(State(state), headers, ConnectInfo(addr), Json(verify_req)).await?;
-    response.is_video = Some(true);
-    response.video_platform = Some(meta.platform);
-    response.spoken_transcript = Some(spoken_text);
-    Ok(Json(response))
+    // The claim sent to AI models is the clean spoken/caption text — no bracket wrappers.
+    // This is what AI will fact-check. The search_query above is used separately for web search.
+    let claim_for_ai = if spoken_text.trim().is_empty() || spoken_text.starts_with('[') {
+        // Fallback: describe the video in plain English for the AI
+        format!(
+            "A {} video titled \"{}\" by \"{}\" claims the following content is factual.",
+            meta.platform,
+            meta.title.as_deref().unwrap_or("Unknown"),
+            meta.author.as_deref().unwrap_or("Unknown")
+        )
+    } else {
+        spoken_text.clone()
+    };
+
+    info!("[VideoVerify] Platform: {} | Search query: \"{}\" | Claim for AI: \"{}\"",
+        meta.platform, search_query, &claim_for_ai.chars().take(80).collect::<String>());
+
+    // Perform web search using the metadata-based query (not the transcript wrappers)
+    let search_context = state.web_searcher.search_for_claim(&search_query).await;
+    let search_ctx = Some(search_context.as_str());
+    info!("[VideoVerify] Web search completed — {} bytes of context", search_context.len());
+
+    // 1. Identify client IP for rate limiting
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|hv| hv.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| addr.ip().to_string());
+
+    // 2. Enforce server-side sliding window rate limit
+    if let Err((retry_after, err_msg)) = state.rate_limiter.check(&client_ip) {
+        warn!("Rate limit tripped for client {}: {}", client_ip, err_msg);
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert(
+            header::RETRY_AFTER,
+            HeaderValue::from_str(&retry_after.to_string()).unwrap_or(HeaderValue::from_static("10")),
+        );
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            resp_headers,
+            Json(serde_json::json!({
+                "error": "Too Many Requests",
+                "message": err_msg,
+                "retry_after_seconds": retry_after
+            })),
+        ));
+    }
+
+    // 3. Resolve API keys
+    let key1 = payload.api_key.as_deref().filter(|k| !k.is_empty())
+        .or_else(|| state.key_pool.get(0).map(|s| s.as_str()));
+    let key2 = payload.api_key.as_deref().filter(|k| !k.is_empty())
+        .or_else(|| state.key_pool.get(1).map(|s| s.as_str()))
+        .or(key1);
+    let key3 = payload.api_key.as_deref().filter(|k| !k.is_empty())
+        .or_else(|| state.key_pool.get(2).map(|s| s.as_str()))
+        .or(key1);
+
+    // 4. Dispatch to 3 AI models with the clean claim + live search evidence
+    let claim_ref = claim_for_ai.as_str();
+    let (res1, res2, res3) = tokio::join!(
+        state.gonka_client.query_model(
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
+            "Causal reasoning and logical fallacy analysis engine. Apply formal logic to evaluate the video content claim against the search evidence.",
+            claim_ref,
+            search_ctx,
+            key1
+        ),
+        state.gonka_client.query_model(
+            "MiniMaxAI/MiniMax-M2.7",
+            "Source attribution and news context verification engine. Cross-reference the video claim and search results against known news outlets and public records.",
+            claim_ref,
+            search_ctx,
+            key2
+        ),
+        state.gonka_client.query_model(
+            "moonshotai/Kimi-K2",
+            "Temporal cross-referencing and bias detection engine. Evaluate the search evidence for recency, narrative framing, and ideological bias in the video claim.",
+            claim_ref,
+            search_ctx,
+            key3
+        )
+    );
+
+    let model_results = vec![res1, res2, res3];
+    let successful_models: Vec<models::ModelResult> = model_results.into_iter().filter_map(|r| r.ok()).collect();
+
+    if successful_models.is_empty() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            HeaderMap::new(),
+            Json(serde_json::json!({
+                "error": "Gonka Router Unreachable",
+                "message": "Failed to receive valid response from Gonka Router AI models. Please try again."
+            })),
+        ));
+    }
+
+    let mut consensus = ConsensusEngine::calculate_consensus(claim_ref, successful_models);
+    consensus.is_video = Some(true);
+    consensus.video_platform = Some(meta.platform);
+    consensus.spoken_transcript = Some(spoken_text);
+    Ok(Json(consensus))
 }
 
