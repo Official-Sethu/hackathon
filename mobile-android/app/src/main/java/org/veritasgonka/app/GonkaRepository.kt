@@ -138,32 +138,56 @@ class GonkaRepository {
         originalClaim: String,
         videoDialogueOverride: String?
     ): VerificationResponse {
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.connectTimeout = 20000
-        // Video requests spool up the server — wait up to 90s with no fallback
-        conn.readTimeout = if (isVideo) 90000 else 60000
-        conn.doOutput = true
+        // Retry up to 3 times to handle Render free-tier cold starts and connection aborts
+        val maxAttempts = 3
+        var lastError: Exception = IOException("Unknown error")
 
-        try {
-            conn.outputStream.use { os ->
-                os.write(body.toString().toByteArray(Charsets.UTF_8))
+        for (attempt in 1..maxAttempts) {
+            try {
+                if (attempt > 1) {
+                    // Exponential backoff: 2s, 4s between retries
+                    Thread.sleep(2000L * (attempt - 1))
+                }
+
+                val conn = URL(endpoint).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Connection", "close")
+                // 30s connect timeout — enough for Render cold start
+                conn.connectTimeout = 30000
+                // Video requests need longer read window (web search + 3x AI models)
+                conn.readTimeout = if (isVideo) 120000 else 75000
+                conn.doOutput = true
+
+                conn.outputStream.use { os ->
+                    os.write(body.toString().toByteArray(Charsets.UTF_8))
+                }
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    val errMsg = try {
+                        conn.errorStream?.bufferedReader()?.use { it.readText() }
+                    } catch (e: Exception) { null }
+                    throw IOException("Trace backend error (HTTP $responseCode): ${errMsg ?: "Server error"}")
+                }
+
+                val respText = conn.inputStream.bufferedReader().use { it.readText() }
+                return parseBackendResponse(respText, isVideo, platform, originalClaim, videoDialogueOverride)
+
+            } catch (e: java.net.SocketException) {
+                // Connection abort / reset — typical Render cold start symptom → retry
+                lastError = IOException("Connection interrupted (attempt $attempt/$maxAttempts). Retrying…")
+            } catch (e: java.net.SocketTimeoutException) {
+                // Timeout on cold start → retry
+                lastError = IOException("Request timed out (attempt $attempt/$maxAttempts). Retrying…")
+            } catch (e: IOException) {
+                // Non-retryable IO error (e.g. HTTP 4xx)
+                if (e.message?.contains("HTTP") == true) throw e
+                lastError = e
             }
-        } catch (e: Exception) {
-            throw IOException("Network connection to Trace backend failed: ${e.message}")
         }
 
-        val responseCode = conn.responseCode
-        if (responseCode != 200) {
-            val errMsg = try {
-                conn.errorStream?.bufferedReader()?.use { it.readText() }
-            } catch (e: Exception) { null }
-            throw IOException("Trace backend error (HTTP $responseCode): ${errMsg ?: "Server error"}")
-        }
-
-        val respText = conn.inputStream.bufferedReader().use { it.readText() }
-        return parseBackendResponse(respText, isVideo, platform, originalClaim, videoDialogueOverride)
+        throw lastError
     }
 
     private fun parseBackendResponse(
