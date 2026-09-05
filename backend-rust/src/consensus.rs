@@ -138,6 +138,9 @@ impl ConsensusEngine {
                 95
             },
             fallacy_risk,
+            is_video: None,
+            video_platform: None,
+            spoken_transcript: None,
             models,
             reasoning_trace,
             fallacies,

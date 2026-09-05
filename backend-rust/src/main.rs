@@ -148,7 +148,7 @@ async fn verify_claim_handler(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<VerifyRequest>,
-) -> Result<impl IntoResponse, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
+) -> Result<Json<models::VerificationResponse>, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
     // 1. Identify client IP for rate limiting
     let client_ip = headers
         .get("x-forwarded-for")
@@ -241,7 +241,7 @@ async fn verify_video_handler(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<VerifyVideoRequest>,
-) -> Result<impl IntoResponse, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
+) -> Result<Json<models::VerificationResponse>, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
     let meta = VideoParser::extract_metadata(&payload.video_url).await;
     let spoken_text = payload.spoken_transcript.unwrap_or(meta.spoken_transcript);
     let claim_prompt = format!("[Viral {} Reel Audio & Spoken Captions]: \"{}\"", meta.platform, spoken_text);
@@ -252,6 +252,10 @@ async fn verify_video_handler(
         api_key: payload.api_key,
     };
 
-    verify_claim_handler(State(state), headers, ConnectInfo(addr), Json(verify_req)).await
+    let Json(mut response) = verify_claim_handler(State(state), headers, ConnectInfo(addr), Json(verify_req)).await?;
+    response.is_video = Some(true);
+    response.video_platform = Some(meta.platform);
+    response.spoken_transcript = Some(spoken_text);
+    Ok(Json(response))
 }
 

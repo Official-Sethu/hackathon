@@ -15,6 +15,7 @@ pub struct VerifyVideoRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelResult {
     pub model: String,
     pub stance: String,
@@ -33,6 +34,7 @@ pub struct ModelResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReasoningStep {
     pub step: u32,
     pub title: String,
@@ -40,12 +42,14 @@ pub struct ReasoningStep {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationSource {
     pub title: String,
     pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VerificationResponse {
     pub claim: String,
     pub truth_score: u32,
@@ -55,6 +59,9 @@ pub struct VerificationResponse {
     pub factuality_index: u32,
     pub consensus_alignment: u32,
     pub fallacy_risk: String,
+    pub is_video: Option<bool>,
+    pub video_platform: Option<String>,
+    pub spoken_transcript: Option<String>,
     pub models: Vec<ModelResult>,
     pub reasoning_trace: Vec<ReasoningStep>,
     pub fallacies: Vec<String>,
