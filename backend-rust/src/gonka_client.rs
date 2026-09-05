@@ -13,7 +13,7 @@ impl GonkaClient {
         Self {
             base_url: "https://api.gonkarouter.io/v1".to_string(),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_default(),
         }
@@ -36,10 +36,12 @@ impl GonkaClient {
         let start = Instant::now();
         let prefix = if model_name.contains("deepseek") {
             "ds"
-        } else if model_name.contains("minimax") {
+        } else if model_name.contains("minimax") || model_name.contains("MiniMax") {
             "mm"
-        } else {
+        } else if model_name.contains("kimi") || model_name.contains("moonshot") {
             "km"
+        } else {
+            "gn"
         };
 
         let effective_key = api_key
@@ -47,20 +49,65 @@ impl GonkaClient {
             .unwrap_or("sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd");
 
         let system_prompt = format!(
-            "{}\n\nYou MUST respond with ONLY a valid JSON object in this exact schema:\n\
+            "ROLE: {role}\n\
+            \n\
+            FACT-CHECKING METHODOLOGY — follow every step in sequence before outputting:\n\
+            \n\
+            STEP 1 — DECOMPOSE\n\
+            Break the claim into atomic, individually verifiable sub-claims. List each one explicitly.\n\
+            \n\
+            STEP 2 — EVIDENCE ASSESSMENT\n\
+            For each sub-claim, clearly state:\n\
+            - What you know from verifiable, real-world sources\n\
+            - What you are inferring or extrapolating\n\
+            - What you cannot confirm with certainty\n\
+            Historic events, stadium flyovers, aviation demonstrations, celebrity statements, \
+            and viral news events reported by multiple outlets (e.g. 9News, Reuters, BBC, AP) \
+            should be given high credibility unless directly contradicted by evidence.\n\
+            \n\
+            STEP 3 — RECENCY CHECK\n\
+            If the claim involves an event within the last 2 years, flag uncertainty and \
+            reduce your confidence score accordingly. Do NOT fabricate post-training-cutoff facts.\n\
+            \n\
+            STEP 4 — BIAS AND FRAMING AUDIT\n\
+            Identify any logical fallacies, misleading framing, cherry-picked statistics, \
+            or emotional manipulation in how the claim is worded.\n\
+            \n\
+            STEP 5 — ANTI-HALLUCINATION SELF-AUDIT\n\
+            Before scoring, ask yourself: am I stating anything I cannot actually verify \
+            from known sources? If yes, remove that assertion and adjust your score downward. \
+            A lower truthScore with honest uncertainty is always better than a confident hallucination.\n\
+            \n\
+            STEP 6 — SCORE AND VERDICT\n\
+            Assign truthScore 0-100 based strictly on evidence weight:\n\
+            - 85-100: Multiple credible sources confirm the claim as-stated\n\
+            - 65-84: Mostly accurate with minor inaccuracies or missing context\n\
+            - 40-64: Partially true, significantly misleading, or unverifiable\n\
+            - 15-39: Mostly false, distorted, or based on a false premise\n\
+            - 0-14: Demonstrably fabricated or directly debunked by evidence\n\
+            \n\
+            STEP 7 — OUTPUT\n\
+            Emit ONLY the raw JSON object below. No markdown fences. No preamble. No commentary outside the JSON.\n\
+            \n\
             {{\n\
               \"truthScore\": <integer 0-100>,\n\
               \"verdict\": \"<VERIFIED FACTUAL & AUTHENTIC | UNSUBSTANTIATED / NUANCED | FABRICATED OR DEBUNKED>\",\n\
-              \"headline\": \"<one concise sentence stating what is claimed and whether it is true>\",\n\
-              \"summary\": \"<2-3 sentences of factual explanation>\",\n\
-              \"assessment\": \"<detailed model-specific evaluation>\",\n\
-              \"confidence\": <integer 0-100>,\n\
+              \"headline\": \"<one precise sentence: what is claimed and whether it is substantiated>\",\n\
+              \"summary\": \"<2-3 sentences of factual explanation grounded in evidence>\",\n\
+              \"assessment\": \"<your full model-specific evaluation referencing the steps above>\",\n\
+              \"confidence\": <integer 0-100, reflect genuine uncertainty — lower when recency-flagged>,\n\
               \"stance\": \"<Verified True | Partially Accurate | Needs Clarification | False>\",\n\
-              \"fallacies\": [\"<detected fallacy if any>\"],\n\
-              \"citations\": [{{\"title\": \"<source title>\", \"url\": \"<source url>\"}}],\n\
-              \"reasoningSteps\": [{{\"title\": \"<step title>\", \"desc\": \"<description>\"}}]\n\
+              \"fallacies\": [\"<detected fallacy or empty array>\"],\n\
+              \"citations\": [{{\"title\": \"<source name>\", \"url\": \"<real url>\"}}],\n\
+              \"reasoningSteps\": [\n\
+                {{\"title\": \"Claim Decomposition\", \"desc\": \"<sub-claims identified>\"}},\n\
+                {{\"title\": \"Evidence Assessment\", \"desc\": \"<what is known vs inferred>\"}},\n\
+                {{\"title\": \"Recency & Bias Audit\", \"desc\": \"<recency flags and framing issues>\"}},\n\
+                {{\"title\": \"Anti-Hallucination Check\", \"desc\": \"<what was removed or flagged as uncertain>\"}},\n\
+                {{\"title\": \"Final Scoring Rationale\", \"desc\": \"<why this score was assigned>\"}}\n\
+              ]\n\
             }}",
-            system_role
+            role = system_role
         );
 
         let mut headers = HeaderMap::new();
@@ -75,8 +122,8 @@ impl GonkaClient {
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": claim}
             ],
-            "temperature": 0.1,
-            "max_tokens": 800
+            "temperature": 0.0,
+            "max_tokens": 1800
         });
 
         let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
@@ -104,9 +151,19 @@ impl GonkaClient {
                                     .unwrap_or_else(|| Self::generate_request_id(prefix));
                                 let tokens = json_resp["usage"]["total_tokens"].as_u64().unwrap_or(400) as u32;
 
-                                // Parse raw JSON emitted by AI
-                                let cleaned = content.replace("```json", "").replace("```", "");
-                                let parsed: Option<serde_json::Value> = serde_json::from_str(cleaned.trim()).ok();
+                                // Strip markdown fences if the model ignored the instruction
+                                let cleaned = content
+                                    .replace("```json", "")
+                                    .replace("```", "")
+                                    .trim()
+                                    .to_string();
+
+                                // Extract JSON object from content in case there is preamble text
+                                let json_start = cleaned.find('{').unwrap_or(0);
+                                let json_end = cleaned.rfind('}').map(|i| i + 1).unwrap_or(cleaned.len());
+                                let json_slice = &cleaned[json_start..json_end];
+
+                                let parsed: Option<serde_json::Value> = serde_json::from_str(json_slice).ok();
 
                                 let truth_score = parsed.as_ref()
                                     .and_then(|p| p.get("truthScore"))
@@ -138,7 +195,7 @@ impl GonkaClient {
                                     .and_then(|p| p.get("confidence"))
                                     .and_then(|v| v.as_u64())
                                     .map(|v| v as u32)
-                                    .unwrap_or(90);
+                                    .unwrap_or(50);
 
                                 let assessment = parsed.as_ref()
                                     .and_then(|p| p.get("assessment"))
@@ -168,7 +225,10 @@ impl GonkaClient {
                                     .map(|arr| {
                                         arr.iter().enumerate().filter_map(|(idx, item)| {
                                             let t = item.get("title")?.as_str()?.to_string();
-                                            let d = item.get("desc").or_else(|| item.get("description"))?.as_str()?.to_string();
+                                            let d = item.get("desc")
+                                                .or_else(|| item.get("description"))
+                                                .and_then(|v| v.as_str())?
+                                                .to_string();
                                             Some(ReasoningStep { step: (idx + 1) as u32, title: t, description: d })
                                         }).collect()
                                     });
@@ -211,4 +271,3 @@ impl GonkaClient {
         }
     }
 }
-

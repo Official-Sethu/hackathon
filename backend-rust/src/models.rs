@@ -59,6 +59,8 @@ pub struct VerificationResponse {
     pub factuality_index: u32,
     pub consensus_alignment: u32,
     pub fallacy_risk: String,
+    /// True when model truth scores diverge by more than 25 points — signals genuine ambiguity
+    pub dissent_flag: Option<bool>,
     pub is_video: Option<bool>,
     pub video_platform: Option<String>,
     pub spoken_transcript: Option<String>,

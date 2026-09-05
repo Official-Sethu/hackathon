@@ -103,7 +103,7 @@ async fn health_handler() -> impl IntoResponse {
         status: "operational".to_string(),
         service: "Trace Axum Multi-Model Truth Engine".to_string(),
         gonka_router_target: "https://gonkarouter.io/v1".to_string(),
-        version: "1.1.0 (Rate-Limited & Secure)".to_string(),
+        version: "1.2.0 (Weighted Consensus & Chain-of-Thought)".to_string(),
     })
 }
 
@@ -111,10 +111,11 @@ async fn models_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "models": [
             { "id": "deepseek-ai/DeepSeek-V4-Flash-0731", "role": "Causal & Formal Logic Reasoning", "routed_via": "gonkarouter.io" },
-            { "id": "MiniMaxAI/MiniMax-M2.7", "role": "Contextual & Source Evidence Examination", "routed_via": "gonkarouter.io" },
-            { "id": "deepseek-ai/DeepSeek-V4-Flash-0731", "role": "Anti-Hallucination & Factual Registry Cross-Check", "routed_via": "gonkarouter.io" }
+            { "id": "MiniMaxAI/MiniMax-M2.7", "role": "Source Attribution & News Context Verification", "routed_via": "gonkarouter.io" },
+            { "id": "moonshotai/Kimi-K2", "role": "Temporal Cross-Referencing & Bias Detection", "routed_via": "gonkarouter.io" }
         ],
         "router": "https://gonkarouter.io/v1",
+        "consensus": "Confidence-weighted voting with majority-vote verdict",
         "security": "Server-side key rotation & rate limiting enabled"
     }))
 }
@@ -196,23 +197,26 @@ async fn verify_claim_handler(
         .or_else(|| state.key_pool.get(2).map(|s| s.as_str()))
         .or(key1);
 
-    // 4. Concurrent dispatch to the 3 Gonka-routed models using tokio::join!
+    // 4. Concurrent dispatch to 3 distinct Gonka-routed models using tokio::join!
+    //    DeepSeek  — causal & logical analysis
+    //    MiniMax   — source attribution & news context
+    //    Kimi-K2   — temporal cross-referencing & bias detection
     let (res1, res2, res3) = tokio::join!(
         state.gonka_client.query_model(
             "deepseek-ai/DeepSeek-V4-Flash-0731",
-            "Causal and logical fallacy analysis engine.",
+            "Causal reasoning and logical fallacy analysis engine. Apply formal logic to evaluate the claim.",
             claim,
             key1
         ),
         state.gonka_client.query_model(
             "MiniMaxAI/MiniMax-M2.7",
-            "Source attribution and news context verification engine.",
+            "Source attribution and news context verification engine. Cross-reference the claim against known news outlets and public records.",
             claim,
             key2
         ),
         state.gonka_client.query_model(
-            "deepseek-ai/DeepSeek-V4-Flash-0731",
-            "Factual database and anti-hallucination verification engine.",
+            "moonshotai/Kimi-K2",
+            "Temporal cross-referencing and bias detection engine. Identify recency flags, narrative framing, and ideological bias in the claim.",
             claim,
             key3
         )
