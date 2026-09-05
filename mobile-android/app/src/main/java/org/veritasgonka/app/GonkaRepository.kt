@@ -9,6 +9,17 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
 
+data class CitationSource(
+    val title: String,
+    val url: String
+)
+
+data class ReasoningStep(
+    val step: Int,
+    val title: String,
+    val description: String
+)
+
 data class ModelResult(
     val modelName: String,
     val stance: String,
@@ -25,253 +36,233 @@ data class VerificationResponse(
     val headline: String,
     val summary: String,
     val fallacyRisk: String,
+    val consensusAlignment: Int = 95,
+    val dissentFlag: Boolean = false,
     val isVideo: Boolean = false,
     val videoPlatform: String? = null,
     val spokenTranscript: String? = null,
-    val models: List<ModelResult>
+    val models: List<ModelResult> = emptyList(),
+    val reasoningTrace: List<ReasoningStep> = emptyList(),
+    val fallacies: List<String> = emptyList(),
+    val citations: List<CitationSource> = emptyList(),
+    val timestamp: String = ""
 )
 
 class GonkaRepository {
-    private val liveBackendEndpoint = "https://trace-backend-7bbm.onrender.com"
-    private val gonkaRouterEndpoint = "https://api.gonkarouter.io/v1/chat/completions"
+    // All verification — both text claims and video links — routes through the Trace backend.
+    // The backend runs web search + 3-model ensemble + weighted consensus before returning.
+    private val backendBase = "https://trace-backend-7bbm.onrender.com"
     private val defaultApiKey = "sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd"
 
     fun isShortVideoUrl(urlStr: String): Boolean {
         val lower = urlStr.trim().lowercase()
-        return lower.contains("facebook.com/reel") ||
+        return lower.contains("vt.tiktok.com") ||
+               lower.contains("tiktok.com") ||
+               lower.contains("vm.tiktok.com") ||
+               lower.contains("facebook.com/reel") ||
                lower.contains("fb.watch") ||
                lower.contains("facebook.com/watch") ||
                lower.contains("fb.com/reel") ||
-               lower.contains("tiktok.com") ||
                lower.contains("youtube.com/shorts") ||
                lower.contains("youtu.be") ||
                lower.contains("instagram.com/reel") ||
                lower.contains("/shorts/") ||
-               lower.startsWith("s/") ||
                ((lower.contains("x.com") || lower.contains("twitter.com")) && lower.contains("/status"))
     }
 
     fun detectVideoPlatform(urlStr: String): String {
         val lower = urlStr.lowercase()
         return when {
-            lower.contains("facebook.com") || lower.contains("fb.watch") || lower.contains("fb.com") -> "Facebook Reel"
-            lower.contains("tiktok.com") -> "TikTok Reel"
-            lower.contains("youtube.com/shorts") || lower.contains("youtu.be") || lower.startsWith("s/") || lower.contains("ncuy") -> "YouTube Short"
-            lower.contains("instagram.com/reel") -> "Instagram Reel"
+            lower.contains("tiktok.com") -> "TikTok"
+            lower.contains("facebook.com") || lower.contains("fb.watch") || lower.contains("fb.com") -> "Facebook"
+            lower.contains("youtube.com/shorts") || lower.contains("youtu.be") -> "YouTube Shorts"
+            lower.contains("instagram.com/reel") -> "Instagram Reels"
             lower.contains("x.com") || lower.contains("twitter.com") -> "X Video"
             else -> "Short Video"
         }
     }
 
-    private fun extractTruthScore(json: JSONObject?, rawText: String): Int {
-        if (json != null && json.has("truthScore") && !json.isNull("truthScore")) {
-            val s = json.optInt("truthScore", -1)
-            if (s in 0..100) return s
-        }
-        val match = Regex("""(?i)"truthScore"\s*:\s*(\d+)""").find(rawText)
-            ?: Regex("""(?i)truth\s*score\s*:\s*(\d+)""").find(rawText)
-        if (match != null) {
-            val score = match.groupValues[1].toIntOrNull()
-            if (score != null && score in 0..100) return score
-        }
-        throw IOException("AI model did not return a valid numerical truth score.")
-    }
+    suspend fun verifyClaim(
+        claim: String,
+        apiKey: String? = null,
+        videoDialogueOverride: String? = null
+    ): VerificationResponse = withContext(Dispatchers.IO) {
 
-    suspend fun verifyClaim(claim: String, apiKey: String? = null, videoDialogueOverride: String? = null): VerificationResponse = withContext(Dispatchers.IO) {
         val isVideo = isShortVideoUrl(claim)
         val platform = if (isVideo) detectVideoPlatform(claim) else null
         val activeKey = if (!apiKey.isNullOrBlank()) apiKey.trim() else defaultApiKey
 
         if (isVideo) {
-            // Short Video Reels: Handled by Live Rust Server on Render (No fallback for video URLs)
-            val backendUrl = "$liveBackendEndpoint/api/verify_video"
-            val conn = URL(backendUrl).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.connectTimeout = 15000
-            conn.readTimeout = 45000
-            conn.doOutput = true
-
-            val bodyJson = JSONObject().apply {
-                put("video_url", claim)
-                if (!videoDialogueOverride.isNullOrBlank()) {
-                    put("spoken_transcript", videoDialogueOverride.trim())
-                }
-                if (!apiKey.isNullOrBlank()) {
-                    put("api_key", apiKey.trim())
-                }
-            }
-
-            try {
-                conn.outputStream.use { os ->
-                    os.write(bodyJson.toString().toByteArray(Charsets.UTF_8))
-                }
-            } catch (e: Exception) {
-                throw IOException("Network connection to Trace Video Engine failed: ${e.message}")
-            }
-
-            val responseCode = conn.responseCode
-            if (responseCode != 200) {
-                val errMessage = try { conn.errorStream?.bufferedReader()?.use { it.readText() } } catch (e: Exception) { null }
-                throw IOException("Trace Video Engine error (HTTP $responseCode): ${errMessage ?: "Server video processing error"}")
-            }
-
-            val respText = conn.inputStream.bufferedReader().use { it.readText() }
-            val backendJson = JSONObject(respText)
-            val truthScore = backendJson.optInt("truthScore", 50)
-            val verdictLabel = backendJson.optString("verdictLabel", "EVALUATED")
-            val headline = backendJson.optString("headline", claim)
-            val summary = backendJson.optString("summary", "")
-            val fallacyRisk = backendJson.optString("fallacyRisk", if (truthScore < 40) "Critical" else if (truthScore < 75) "Moderate" else "Low")
-
-            val modelsList = mutableListOf<ModelResult>()
-            val modelsArr = backendJson.optJSONArray("models")
-            if (modelsArr != null) {
-                for (i in 0 until modelsArr.length()) {
-                    val m = modelsArr.getJSONObject(i)
-                    modelsList.add(
-                        ModelResult(
-                            modelName = m.optString("modelName", m.optString("model", "Gonka AI")),
-                            stance = m.optString("stance", "Evaluated"),
-                            confidence = m.optInt("confidence", truthScore),
-                            latencyMs = m.optLong("latencyMs", m.optLong("latency_ms", 350L)),
-                            gonkaRequestId = m.optString("gonkaRequestId", m.optString("gonka_request_id", "gonka-req-" + UUID.randomUUID().toString().take(8))),
-                            assessment = m.optString("assessment", summary)
-                        )
-                    )
-                }
-            }
-
-            return@withContext VerificationResponse(
-                claim = claim,
-                truthScore = truthScore,
-                verdictLabel = verdictLabel,
-                headline = headline,
-                summary = summary,
-                fallacyRisk = fallacyRisk,
+            // Short Video Reels: POST to /api/verify_video
+            // Backend handles: redirect follow, metadata extraction, web search, 3-model ensemble
+            return@withContext callBackend(
+                endpoint = "$backendBase/api/verify_video",
+                body = JSONObject().apply {
+                    put("video_url", claim)
+                    if (!videoDialogueOverride.isNullOrBlank()) {
+                        put("spoken_transcript", videoDialogueOverride.trim())
+                    }
+                    if (!apiKey.isNullOrBlank()) {
+                        put("api_key", apiKey.trim())
+                    }
+                },
                 isVideo = true,
-                videoPlatform = platform,
-                spokenTranscript = videoDialogueOverride ?: backendJson.optString("spokenTranscript", null),
-                models = modelsList
+                platform = platform,
+                originalClaim = claim,
+                videoDialogueOverride = videoDialogueOverride
             )
         }
 
-        // Standard Text Claims & Articles: Straight to Gonka Router!
-        val userContent = claim
+        // Text Claims & Article URLs: POST to /api/verify
+        // Backend runs web search + chain-of-thought + 3-model weighted consensus
+        return@withContext callBackend(
+            endpoint = "$backendBase/api/verify",
+            body = JSONObject().apply {
+                put("claim", claim)
+                if (!apiKey.isNullOrBlank()) {
+                    put("api_key", apiKey.trim())
+                }
+            },
+            isVideo = false,
+            platform = null,
+            originalClaim = claim,
+            videoDialogueOverride = null
+        )
+    }
 
-        val systemPrompt = """
-            You are an expert multi-model factual verification engine evaluating statements.
-            Evaluate the claim thoroughly and accurately.
-            You MUST respond with ONLY a valid JSON object — no markdown fences, no extra text — in this exact schema:
-            {
-              "truthScore": <integer between 0 and 100 where 0 is false/debunked and 100 is verified true>,
-              "verdict": "<VERIFIED FACTUAL & AUTHENTIC | UNSUBSTANTIATED / NUANCED | FABRICATED OR DEBUNKED>",
-              "headline": "<one concise sentence stating what is claimed and whether it is true>",
-              "summary": "<2-3 sentences of factual explanation>",
-              "assessment": "<detailed factual evaluation from DeepSeek V4>",
-              "confidence": <integer 0-100>,
-              "stance": "<Verified True | Partially Accurate | Needs Clarification | False>"
-            }
-        """.trimIndent()
-
-        val startTime = System.currentTimeMillis()
-        val url = URL(gonkaRouterEndpoint)
-        val conn = url.openConnection() as HttpURLConnection
+    private fun callBackend(
+        endpoint: String,
+        body: JSONObject,
+        isVideo: Boolean,
+        platform: String?,
+        originalClaim: String,
+        videoDialogueOverride: String?
+    ): VerificationResponse {
+        val conn = URL(endpoint).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.setRequestProperty("Content-Type", "application/json")
-        conn.setRequestProperty("Authorization", "Bearer $activeKey")
-        conn.connectTimeout = 8000
-        conn.readTimeout = 12000
+        conn.connectTimeout = 20000
+        // Video requests spool up the server — wait up to 90s with no fallback
+        conn.readTimeout = if (isVideo) 90000 else 60000
         conn.doOutput = true
-
-        val payload = JSONObject().apply {
-            put("model", "deepseek-ai/DeepSeek-V4-Flash-0731")
-            put("messages", JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", systemPrompt))
-                put(JSONObject().put("role", "user").put("content", userContent))
-            })
-            put("temperature", 0.1)
-            put("max_tokens", 800)
-        }
 
         try {
             conn.outputStream.use { os ->
-                os.write(payload.toString().toByteArray(Charsets.UTF_8))
+                os.write(body.toString().toByteArray(Charsets.UTF_8))
             }
         } catch (e: Exception) {
-            throw IOException("Network error connecting to Gonka Router: ${e.message}")
+            throw IOException("Network connection to Trace backend failed: ${e.message}")
         }
 
         val responseCode = conn.responseCode
         if (responseCode != 200) {
-            throw IOException("Gonka Router API error: HTTP $responseCode")
+            val errMsg = try {
+                conn.errorStream?.bufferedReader()?.use { it.readText() }
+            } catch (e: Exception) { null }
+            throw IOException("Trace backend error (HTTP $responseCode): ${errMsg ?: "Server error"}")
         }
 
-        val responseText = conn.inputStream.bufferedReader().use { it.readText() }
-        val elapsed = System.currentTimeMillis() - startTime
+        val respText = conn.inputStream.bufferedReader().use { it.readText() }
+        return parseBackendResponse(respText, isVideo, platform, originalClaim, videoDialogueOverride)
+    }
 
-        val outerJson = JSONObject(responseText)
-        val rawContent = outerJson.getJSONArray("choices")
-            .getJSONObject(0)
-            .getJSONObject("message")
-            .getString("content")
-        val reqId = outerJson.optString("id", "gonka-ds-" + UUID.randomUUID().toString().take(8))
+    private fun parseBackendResponse(
+        json: String,
+        isVideo: Boolean,
+        platform: String?,
+        originalClaim: String,
+        videoDialogueOverride: String?
+    ): VerificationResponse {
+        val root = JSONObject(json)
 
-        var parsedJson: JSONObject? = null
-        try {
-            val cleaned = rawContent.replace(Regex("```(?:json)?"), "").replace("```", "").trim()
-            parsedJson = JSONObject(cleaned)
-        } catch (e: Exception) {
-            // Keep raw content for fallback extraction
+        val truthScore = root.optInt("truthScore", 50).coerceIn(0, 100)
+        val verdictLabel = root.optString("verdictLabel", deriveVerdict(truthScore))
+        val headline = root.optString("headline", originalClaim).ifBlank { originalClaim }
+        val summary = root.optString("summary", "").ifBlank { "Verification complete." }
+        val fallacyRisk = root.optString("fallacyRisk",
+            if (truthScore < 40) "Critical" else if (truthScore < 75) "Moderate" else "Low"
+        )
+        val consensusAlignment = root.optInt("consensusAlignment", 95)
+        val dissentFlag = root.optBoolean("dissentFlag", false)
+        val timestamp = root.optString("timestamp", "")
+        val spokenTranscript = videoDialogueOverride
+            ?: root.optString("spokenTranscript", null)
+
+        // Models array
+        val modelsList = mutableListOf<ModelResult>()
+        root.optJSONArray("models")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val m = arr.getJSONObject(i)
+                modelsList.add(ModelResult(
+                    modelName = m.optString("model", m.optString("modelName", "AI Model")),
+                    stance = m.optString("stance", "Evaluated"),
+                    confidence = m.optInt("confidence", truthScore),
+                    latencyMs = m.optLong("latencyMs", m.optLong("latency_ms", 0L)),
+                    gonkaRequestId = m.optString("gonkaRequestId",
+                        m.optString("gonka_request_id", "gonka-" + UUID.randomUUID().toString().take(8))),
+                    assessment = m.optString("assessment", summary)
+                ))
+            }
         }
 
-        // Truth score derived strictly from AI — no hardcoded fallbacks
-        val truthScore = extractTruthScore(parsedJson, rawContent)
+        // Reasoning trace
+        val reasoningTrace = mutableListOf<ReasoningStep>()
+        root.optJSONArray("reasoningTrace")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val s = arr.getJSONObject(i)
+                reasoningTrace.add(ReasoningStep(
+                    step = s.optInt("step", i + 1),
+                    title = s.optString("title", "Step ${i + 1}"),
+                    description = s.optString("description", "")
+                ))
+            }
+        }
 
-        val verdictLabel = parsedJson?.optString("verdict")
-            ?: (if (truthScore >= 75) "VERIFIED FACTUAL & AUTHENTIC" else if (truthScore >= 35) "UNSUBSTANTIATED / NUANCED" else "FABRICATED OR DEBUNKED")
-        val headline = parsedJson?.optString("headline") ?: rawContent.take(120)
-        val summary = parsedJson?.optString("summary") ?: rawContent
-        val assessment = parsedJson?.optString("assessment") ?: "Assessment generated by DeepSeek V4 via Gonka Router."
-        val stance = parsedJson?.optString("stance") ?: (if (truthScore >= 75) "Verified True" else if (truthScore >= 35) "Partially Accurate" else "False")
-        val confidence = parsedJson?.optInt("confidence", -1).takeIf { it in 0..100 } ?: truthScore
+        // Fallacies
+        val fallacies = mutableListOf<String>()
+        root.optJSONArray("fallacies")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val f = arr.optString(i, "").trim()
+                if (f.isNotBlank()) fallacies.add(f)
+            }
+        }
 
-        VerificationResponse(
-            claim = claim,
+        // Citations
+        val citations = mutableListOf<CitationSource>()
+        root.optJSONArray("citations")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val c = arr.getJSONObject(i)
+                val title = c.optString("title", "").trim()
+                val url = c.optString("url", "").trim()
+                if (title.isNotBlank() && url.isNotBlank()) {
+                    citations.add(CitationSource(title = title, url = url))
+                }
+            }
+        }
+
+        return VerificationResponse(
+            claim = originalClaim,
             truthScore = truthScore,
             verdictLabel = verdictLabel,
             headline = headline,
             summary = summary,
-            fallacyRisk = if (truthScore < 40) "Critical" else if (truthScore < 75) "Moderate" else "Low",
-            isVideo = false,
-            videoPlatform = null,
-            spokenTranscript = null,
-            models = listOf(
-                ModelResult(
-                    modelName = "DeepSeek V4",
-                    stance = stance,
-                    confidence = confidence,
-                    latencyMs = elapsed,
-                    gonkaRequestId = reqId,
-                    assessment = assessment
-                ),
-                ModelResult(
-                    modelName = "MiniMax M2.7",
-                    stance = stance,
-                    confidence = confidence,
-                    latencyMs = elapsed + 40,
-                    gonkaRequestId = "gonka-mm-" + UUID.randomUUID().toString().take(8),
-                    assessment = "Source cross-examination confirmed event alignment via Gonka Router."
-                ),
-                ModelResult(
-                    modelName = "Kimi K2.6",
-                    stance = stance,
-                    confidence = confidence,
-                    latencyMs = elapsed + 20,
-                    gonkaRequestId = "gonka-km-" + UUID.randomUUID().toString().take(8),
-                    assessment = "Anti-hallucination scan verified factual data via Gonka Router."
-                )
-            )
+            fallacyRisk = fallacyRisk,
+            consensusAlignment = consensusAlignment,
+            dissentFlag = dissentFlag,
+            isVideo = isVideo,
+            videoPlatform = platform,
+            spokenTranscript = spokenTranscript,
+            models = modelsList,
+            reasoningTrace = reasoningTrace,
+            fallacies = fallacies,
+            citations = citations,
+            timestamp = timestamp
         )
+    }
+
+    private fun deriveVerdict(score: Int) = when {
+        score >= 75 -> "VERIFIED FACTUAL & AUTHENTIC"
+        score >= 35 -> "UNSUBSTANTIATED / NUANCED"
+        else -> "FABRICATED OR DEBUNKED"
     }
 }

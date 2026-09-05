@@ -499,6 +499,33 @@ private fun ResultsCard(res: VerificationResponse) {
                 }
             }
 
+            // Dissent flag warning
+            if (res.dissentFlag) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFFFBEB))
+                        .border(1.dp, Color(0xFFFCD34D), RoundedCornerShape(8.dp))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(ColorPending)
+                    )
+                    Text(
+                        text = "Models disagree significantly — treat this result with caution",
+                        fontSize = 12.sp,
+                        color = Color(0xFF92400E),
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+
             // Video spoken audio card
             if (res.isVideo) {
                 Column(
@@ -532,6 +559,161 @@ private fun ResultsCard(res: VerificationResponse) {
                 color = TextSecondary,
                 lineHeight = 19.sp
             )
+
+            // Reasoning trace
+            if (res.reasoningTrace.isNotEmpty()) {
+                HorizontalDivider(color = BorderLight)
+                Text(
+                    text = "REASONING TRACE",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted,
+                    letterSpacing = 0.6.sp
+                )
+                res.reasoningTrace.forEach { step ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BgSubtle)
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = "${step.step}. ${step.title}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentIndigo
+                        )
+                        Text(
+                            text = step.description,
+                            fontSize = 12.sp,
+                            color = TextSecondary,
+                            lineHeight = 17.sp
+                        )
+                    }
+                }
+            }
+
+            // Citations
+            if (res.citations.isNotEmpty()) {
+                HorizontalDivider(color = BorderLight)
+                Text(
+                    text = "SOURCES",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted,
+                    letterSpacing = 0.6.sp
+                )
+                res.citations.forEach { cite ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(AccentIndigo)
+                                .padding(top = 6.dp)
+                        )
+                        Column {
+                            Text(
+                                text = cite.title,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = AccentIndigo,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = cite.url,
+                                fontSize = 11.sp,
+                                color = TextMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Fallacies (only show if not the default "no fallacies" message)
+            val realFallacies = res.fallacies.filter {
+                !it.contains("No significant", ignoreCase = true)
+            }
+            if (realFallacies.isNotEmpty()) {
+                HorizontalDivider(color = BorderLight)
+                Text(
+                    text = "FALLACIES DETECTED",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ColorDebunked,
+                    letterSpacing = 0.6.sp
+                )
+                realFallacies.forEach { fallacy ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(ColorDebunked)
+                        )
+                        Text(
+                            text = fallacy,
+                            fontSize = 12.sp,
+                            color = TextSecondary,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+            }
+
+            // Consensus alignment bar
+            if (res.consensusAlignment > 0) {
+                HorizontalDivider(color = BorderLight)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Model Consensus",
+                        fontSize = 11.sp,
+                        color = TextMuted,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${res.consensusAlignment}%",
+                        fontSize = 11.sp,
+                        color = AccentIndigo,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(BorderLight)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(res.consensusAlignment / 100f)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(AccentIndigo, AccentViolet)
+                                )
+                            )
+                    )
+                }
+            }
         }
     }
 }
