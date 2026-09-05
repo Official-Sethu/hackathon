@@ -10,7 +10,7 @@ pub struct SearchResult {
 
 #[derive(Deserialize)]
 struct JinaResponse {
-    data: Option<Vec<JinaResult>>,
+    data: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -19,6 +19,7 @@ struct JinaResult {
     url: Option<String>,
     content: Option<String>,
     description: Option<String>,
+    snippet: Option<String>,
 }
 
 pub struct WebSearcher {
@@ -114,26 +115,34 @@ impl WebSearcher {
         match req.send().await {
             Ok(resp) if resp.status().is_success() => {
                 match resp.json::<JinaResponse>().await {
-                    Ok(jina) => jina
-                        .data
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|r| {
-                            let title = r.title.filter(|t| !t.trim().is_empty())?;
-                            let url = r.url.filter(|u| !u.trim().is_empty())?;
-                            let snippet = r
-                                .content
-                                .or(r.description)
-                                .unwrap_or_default()
-                                .chars()
-                                .take(300)
-                                .collect::<String>();
-                            Some(SearchResult { title, url, snippet })
-                        })
-                        .collect(),
+                    Ok(jina) => {
+                        let items: Vec<JinaResult> = match jina.data {
+                            Some(serde_json::Value::Array(arr)) => {
+                                arr.into_iter().filter_map(|v| serde_json::from_value::<JinaResult>(v).ok()).collect()
+                            }
+                            Some(v) => serde_json::from_value::<JinaResult>(v).into_iter().collect(),
+                            None => Vec::new(),
+                        };
+
+                        items
+                            .into_iter()
+                            .filter_map(|r| {
+                                let title = r.title.filter(|t| !t.trim().is_empty())?;
+                                let url = r.url.filter(|u| !u.trim().is_empty())?;
+                                let snippet = r
+                                    .content
+                                    .or(r.description)
+                                    .or(r.snippet)
+                                    .unwrap_or_default()
+                                    .chars()
+                                    .take(400)
+                                    .collect::<String>();
+                                Some(SearchResult { title, url, snippet })
+                            })
+                            .collect()
+                    }
                     Err(e) => {
                         tracing::warn!("Jina AI search JSON parse failed: {}", e);
-                        // Fallback: DuckDuckGo Instant Answer
                         self.fetch_ddg(query).await
                     }
                 }
