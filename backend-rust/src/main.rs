@@ -110,9 +110,9 @@ async fn health_handler() -> impl IntoResponse {
 async fn models_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "models": [
-            { "id": "deepseek-ai/deepseek-v4", "role": "Causal & Formal Logic Reasoning", "routed_via": "gonkarouter.io" },
-            { "id": "minimax/minimax-m2.7", "role": "Contextual & Source Evidence Examination", "routed_via": "gonkarouter.io" },
-            { "id": "moonshot/kimi-k2.6", "role": "Anti-Hallucination & Factual Registry Cross-Check", "routed_via": "gonkarouter.io" }
+            { "id": "deepseek-ai/DeepSeek-V4-Flash-0731", "role": "Causal & Formal Logic Reasoning", "routed_via": "gonkarouter.io" },
+            { "id": "MiniMaxAI/MiniMax-M2.7", "role": "Contextual & Source Evidence Examination", "routed_via": "gonkarouter.io" },
+            { "id": "deepseek-ai/DeepSeek-V4-Flash-0731", "role": "Anti-Hallucination & Factual Registry Cross-Check", "routed_via": "gonkarouter.io" }
         ],
         "router": "https://gonkarouter.io/v1",
         "security": "Server-side key rotation & rate limiting enabled"
@@ -199,19 +199,19 @@ async fn verify_claim_handler(
     // 4. Concurrent dispatch to the 3 Gonka-routed models using tokio::join!
     let (res1, res2, res3) = tokio::join!(
         state.gonka_client.query_model(
-            "deepseek-ai/deepseek-v4",
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
             "Causal and logical fallacy analysis engine.",
             claim,
             key1
         ),
         state.gonka_client.query_model(
-            "minimax/minimax-m2.7",
+            "MiniMaxAI/MiniMax-M2.7",
             "Source attribution and news context verification engine.",
             claim,
             key2
         ),
         state.gonka_client.query_model(
-            "moonshot/kimi-k2.6",
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
             "Factual database and anti-hallucination verification engine.",
             claim,
             key3
