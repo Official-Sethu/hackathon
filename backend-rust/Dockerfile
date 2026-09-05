@@ -1,5 +1,5 @@
 # Stage 1: Build Rust binary
-FROM rust:1.75-slim as builder
+FROM rust:1.82-slim as builder
 WORKDIR /usr/src/app
 COPY . .
 RUN cargo build --release
