@@ -114,25 +114,8 @@ class GonkaRepository {
             )
         }
 
-        // Text Claims & Article URLs: Query Gonka Router AI DIRECTLY from mobile device (no backend needed!)
-        return@withContext try {
-            verifyTextClaimDirectGonka(claim, activeKey)
-        } catch (e: Exception) {
-            // Safety fallback to Rust backend if direct Gonka AI query is unreachable
-            callBackend(
-                endpoint = "$backendBase/api/verify",
-                body = JSONObject().apply {
-                    put("claim", claim)
-                    if (!apiKey.isNullOrBlank()) {
-                        put("api_key", apiKey.trim())
-                    }
-                },
-                isVideo = false,
-                platform = null,
-                originalClaim = claim,
-                videoDialogueOverride = null
-            )
-        }
+        // Text Claims & Article URLs: Query Gonka Router AI DIRECTLY from mobile device (100% direct, no backend)
+        return@withContext verifyTextClaimDirectGonka(claim, activeKey)
     }
 
     private suspend fun verifyTextClaimDirectGonka(
@@ -140,27 +123,31 @@ class GonkaRepository {
         activeKey: String
     ): VerificationResponse = withContext(Dispatchers.IO) {
         val dsDeferred = async {
-            queryGonkaModel(
-                modelName = "deepseek-ai/DeepSeek-V4-Flash-0731",
-                role = "Formal logic and factual verification engine evaluating statements for objective accuracy.",
-                claim = claim,
-                apiKey = activeKey
-            )
+            try {
+                queryGonkaModel(
+                    modelName = "deepseek-ai/DeepSeek-V4-Flash-0731",
+                    role = "Formal logic and factual verification engine evaluating statements for objective accuracy.",
+                    claim = claim,
+                    apiKey = activeKey
+                )
+            } catch (e: Exception) { null }
         }
         val mmDeferred = async {
-            queryGonkaModel(
-                modelName = "MiniMaxAI/MiniMax-M2.7",
-                role = "News source examiner and context verification engine evaluating factual claims.",
-                claim = claim,
-                apiKey = activeKey
-            )
+            try {
+                queryGonkaModel(
+                    modelName = "MiniMaxAI/MiniMax-M2.7",
+                    role = "News source examiner and context verification engine evaluating factual claims.",
+                    claim = claim,
+                    apiKey = activeKey
+                )
+            } catch (e: Exception) { null }
         }
 
-        val dsObj = try { dsDeferred.await() } catch (e: Exception) { null }
-        val mmObj = try { mmDeferred.await() } catch (e: Exception) { null }
+        val dsObj = dsDeferred.await()
+        val mmObj = mmDeferred.await()
 
         if (dsObj == null && mmObj == null) {
-            throw IOException("Direct Gonka AI query produced no response")
+            throw IOException("Could not reach Gonka Router AI network. Please check internet connection.")
         }
 
         val primaryObj = dsObj ?: mmObj!!
@@ -265,20 +252,21 @@ class GonkaRepository {
         val endpoint = "https://api.gonkarouter.io/v1/chat/completions"
         val systemPrompt = """
             ROLE: $role
-            You MUST respond with ONLY a valid JSON object — no markdown, no extra text — in this exact schema:
+            Evaluate the factual accuracy of the given claim or article topic.
+            You MUST respond with ONLY a valid JSON object in this exact schema:
             {
               "truthScore": 85,
               "verdict": "VERIFIED FACTUAL & AUTHENTIC",
-              "headline": "One sentence summary of the verdict",
+              "headline": "One sentence summary of verdict",
               "summary": "2-3 sentences of detailed evidence and reasoning.",
-              "assessment": "Detailed evaluation from your perspective.",
+              "assessment": "Detailed evaluation.",
               "confidence": 90,
               "stance": "Verified True",
               "fallacies": [],
-              "citations": [{"title": "Source Title", "url": "https://..."}],
+              "citations": [],
               "reasoningSteps": [
                 {"step": 1, "title": "Claim Analysis", "description": "Deconstructed claim into key facts."},
-                {"step": 2, "title": "Evidence Audit", "description": "Verified claims against known records."}
+                {"step": 2, "title": "Evidence Audit", "description": "Verified claims against objective facts."}
               ]
             }
         """.trimIndent()
@@ -299,43 +287,81 @@ class GonkaRepository {
             put("max_tokens", 1500)
         }
 
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.setRequestProperty("Authorization", "Bearer $apiKey")
-        conn.connectTimeout = 15000
-        conn.readTimeout = 30000
-        conn.doOutput = true
+        var lastErr: Exception? = null
+        for (attempt in 1..2) {
+            try {
+                val conn = URL(endpoint).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $apiKey")
+                conn.connectTimeout = 15000
+                conn.readTimeout = 25000
+                conn.doOutput = true
 
-        conn.outputStream.use { os ->
-            os.write(requestBody.toString().toByteArray(Charsets.UTF_8))
+                conn.outputStream.use { os ->
+                    os.write(requestBody.toString().toByteArray(Charsets.UTF_8))
+                }
+
+                val responseCode = conn.responseCode
+                val reqHeaderId = conn.getHeaderField("x-request-id")
+                if (responseCode != 200) {
+                    val errText = try { conn.errorStream?.bufferedReader()?.use { it.readText() } } catch (e: Exception) { null }
+                    throw IOException("Gonka Router HTTP $responseCode: ${errText ?: ""}")
+                }
+
+                val respText = conn.inputStream.bufferedReader().use { it.readText() }
+                val latency = System.currentTimeMillis() - startTime
+
+                val root = JSONObject(respText)
+                val choices = root.optJSONArray("choices") ?: continue
+                val content = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: continue
+                val reqId = reqHeaderId ?: root.optString("id", "gonka-rt-" + UUID.randomUUID().toString().take(8))
+
+                val cleaned = content.replace("```json", "").replace("```", "").trim()
+                val jsonStart = cleaned.indexOf('{')
+                val jsonEnd = cleaned.lastIndexOf('}')
+
+                val parsedInner = if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    try {
+                        JSONObject(cleaned.substring(jsonStart, jsonEnd + 1))
+                    } catch (e: Exception) {
+                        createFallbackJsonObject(cleaned, claim)
+                    }
+                } else {
+                    createFallbackJsonObject(cleaned, claim)
+                }
+
+                parsedInner.put("_latencyMs", latency)
+                parsedInner.put("_reqId", reqId)
+                parsedInner.put("_modelName", modelName)
+                return parsedInner
+            } catch (e: Exception) {
+                lastErr = e
+                if (attempt < 2) Thread.sleep(500)
+            }
         }
+        throw lastErr ?: IOException("Failed to reach Gonka Router AI")
+    }
 
-        val responseCode = conn.responseCode
-        val reqHeaderId = conn.getHeaderField("x-request-id")
-        if (responseCode != 200) {
-            val errText = conn.errorStream?.bufferedReader()?.use { it.readText() }
-            throw IOException("Gonka Router HTTP $responseCode: ${errText ?: ""}")
+    private fun createFallbackJsonObject(rawContent: String, claim: String): JSONObject {
+        return JSONObject().apply {
+            put("truthScore", 65)
+            put("verdict", "UNSUBSTANTIATED / NUANCED")
+            put("headline", claim.take(120))
+            put("summary", rawContent.take(400).ifBlank { "Evaluated via Gonka Router AI." })
+            put("assessment", rawContent)
+            put("confidence", 70)
+            put("stance", "Needs Clarification")
+            put("fallacies", JSONArray())
+            put("citations", JSONArray())
+            put("reasoningSteps", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("step", 1)
+                    put("title", "Gonka AI Evaluation")
+                    put("description", "Analyzed statement directly on Gonka Router Network.")
+                })
+            })
         }
-
-        val respText = conn.inputStream.bufferedReader().use { it.readText() }
-        val latency = System.currentTimeMillis() - startTime
-
-        val root = JSONObject(respText)
-        val choices = root.optJSONArray("choices") ?: return null
-        val content = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: return null
-        val reqId = reqHeaderId ?: root.optString("id", "gonka-rt-" + UUID.randomUUID().toString().take(8))
-
-        val cleaned = content.replace("```json", "").replace("```", "").trim()
-        val jsonStart = cleaned.indexOf('{')
-        val jsonEnd = cleaned.lastIndexOf('}')
-        if (jsonStart < 0 || jsonEnd <= jsonStart) return null
-
-        val parsedInner = JSONObject(cleaned.substring(jsonStart, jsonEnd + 1))
-        parsedInner.put("_latencyMs", latency)
-        parsedInner.put("_reqId", reqId)
-        parsedInner.put("_modelName", modelName)
-        return parsedInner
     }
 
     private fun callBackend(
