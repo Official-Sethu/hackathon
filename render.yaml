@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: trace-backend
+    env: docker
+    rootDir: backend-rust
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: GONKA_API_KEY_1
+        value: sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "20"
+      - key: RATE_LIMIT_WINDOW_SECS
+        value: "60"

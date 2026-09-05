@@ -1,0 +1,31 @@
+# Environment Secrets (Crucial Security Protection)
+.env
+*.env
+*.env.local
+.env.*.local
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Mobile Android build artifacts
+*.zip
+mobile-android/*.zip
+mobile-android/jdk17_root
+mobile-android/jdk17_root/
+mobile-android/.gradle/
+mobile-android/app/build/
