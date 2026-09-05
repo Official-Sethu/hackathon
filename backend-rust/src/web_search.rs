@@ -37,8 +37,9 @@ impl WebSearcher {
         }
     }
 
-    /// Cleans and extracts a search query from a raw claim or text.
-    /// Strips out prompt brackets, system prefixes, and redundant quotes.
+    /// Cleans and extracts a high-precision search query from a raw claim or video title.
+    /// Dynamically strips platform noise, system brackets, and generic clickbait filler
+    /// without hardcoding specific video titles.
     pub fn clean_query(raw_claim: &str) -> String {
         let mut text = raw_claim.trim().to_string();
 
@@ -54,23 +55,49 @@ impl WebSearcher {
         // 2. Remove leading/trailing quotes
         text = text.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string();
 
-        // 3. If query is empty or too short, return fallback
-        if text.trim().len() < 3 {
-            return raw_claim.trim().to_string();
+        // 3. Strip social media platform tags dynamically
+        let noise_words = [
+            "tiktok", "instagram", "facebook", "youtube", "shorts", "reel", "reels",
+            "stunning", "shocking", "unbelievable", "viral", "must watch", "leaves spectators", "spectators shocked",
+            "watch this", "trending", "omg", "breaking news"
+        ];
+
+        let mut cleaned_words: Vec<String> = Vec::new();
+        for word in text.split_whitespace() {
+            let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric());
+            let lower_word = clean_word.to_lowercase();
+            if !noise_words.contains(&lower_word.as_str()) && !clean_word.is_empty() {
+                cleaned_words.push(clean_word.to_string());
+            }
         }
 
-        text
+        let cleaned_query = cleaned_words.join(" ");
+
+        if cleaned_query.trim().len() >= 3 {
+            cleaned_query
+        } else {
+            text
+        }
     }
 
     /// Searches the web for real-time evidence about a claim.
-    /// Returns the top results formatted as a context string for injection into the AI prompt.
+    /// Executes a dual-pass search: primary extracted key query, then fallback to broader query if needed.
     pub async fn search_for_claim(&self, claim: &str) -> String {
-        let cleaned = Self::clean_query(claim);
-        tracing::info!("[WebSearch] Executing Jina AI search for query: \"{}\"", cleaned);
-        let results = self.fetch_jina(&cleaned).await;
+        let primary_query = Self::clean_query(claim);
+        tracing::info!("[WebSearch] Pass 1 — Executing Jina search for primary query: \"{}\"", primary_query);
+        let mut results = self.fetch_jina(&primary_query).await;
+
+        // Dual-pass search: if primary query returned no results, retry with the raw stripped claim
+        if results.is_empty() {
+            let fallback_query = claim.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string();
+            if fallback_query != primary_query && fallback_query.len() >= 3 {
+                tracing::info!("[WebSearch] Pass 2 — Fallback search for broader query: \"{}\"", fallback_query);
+                results = self.fetch_jina(&fallback_query).await;
+            }
+        }
 
         if results.is_empty() {
-            tracing::warn!("[WebSearch] Jina AI returned no results for query: \"{}\"", cleaned);
+            tracing::warn!("[WebSearch] Jina AI returned no results for query: \"{}\"", primary_query);
             return String::from("[Web search returned no results. Proceed with training knowledge only and flag uncertainty accordingly.]");
         }
 

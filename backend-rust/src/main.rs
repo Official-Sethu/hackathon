@@ -260,71 +260,16 @@ async fn verify_video_handler(
     Json(payload): Json<VerifyVideoRequest>,
 ) -> Result<Json<models::VerificationResponse>, (StatusCode, HeaderMap, Json<serde_json::Value>)> {
     let meta = VideoParser::extract_metadata(&payload.video_url).await;
-    let spoken_text = payload.spoken_transcript.clone().unwrap_or_else(|| meta.spoken_transcript.clone());
-
-    // Build a unique, specific search query from video metadata (title/author/caption)
-    let video_search_query = match (&meta.title, &meta.author) {
-        (Some(t), Some(a)) => format!("{} {} {}", t, a, meta.platform),
-        (Some(t), None) => format!("{} {}", t, meta.platform),
-        (None, Some(a)) => format!("{} video {}", a, meta.platform),
-        _ => spoken_text.clone(),
-    };
-
+    let spoken_text = payload.spoken_transcript.unwrap_or(meta.spoken_transcript);
     let claim_prompt = format!("[Viral {} Reel Audio & Spoken Captions]: \"{}\"", meta.platform, spoken_text);
 
-    // Run web search using the video-specific search query
-    let search_context = state.web_searcher.search_for_claim(&video_search_query).await;
-    let search_ctx = Some(search_context.as_str());
+    let verify_req = VerifyRequest {
+        claim: claim_prompt,
+        is_url: Some(true),
+        api_key: payload.api_key,
+    };
 
-    // Call gonka models with the claim prompt and video search evidence
-    let key1 = payload.api_key.as_deref().filter(|k| !k.is_empty())
-        .or_else(|| state.key_pool.get(0).map(|s| s.as_str()));
-    let key2 = payload.api_key.as_deref().filter(|k| !k.is_empty())
-        .or_else(|| state.key_pool.get(1).map(|s| s.as_str()))
-        .or(key1);
-    let key3 = payload.api_key.as_deref().filter(|k| !k.is_empty())
-        .or_else(|| state.key_pool.get(2).map(|s| s.as_str()))
-        .or(key1);
-
-    let (res1, res2, res3) = tokio::join!(
-        state.gonka_client.query_model(
-            "deepseek-ai/DeepSeek-V4-Flash-0731",
-            "Causal reasoning and logical fallacy analysis engine. Apply formal logic to evaluate the claim against the search evidence.",
-            &claim_prompt,
-            search_ctx,
-            key1
-        ),
-        state.gonka_client.query_model(
-            "MiniMaxAI/MiniMax-M2.7",
-            "Source attribution and news context verification engine. Cross-reference the claim and search results against known news outlets and public records.",
-            &claim_prompt,
-            search_ctx,
-            key2
-        ),
-        state.gonka_client.query_model(
-            "moonshotai/Kimi-K2",
-            "Temporal cross-referencing and bias detection engine. Evaluate the search evidence for recency, narrative framing, and ideological bias.",
-            &claim_prompt,
-            search_ctx,
-            key3
-        )
-    );
-
-    let model_results = vec![res1, res2, res3];
-    let successful_models: Vec<models::ModelResult> = model_results.into_iter().filter_map(|r| r.ok()).collect();
-
-    if successful_models.is_empty() {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            HeaderMap::new(),
-            Json(serde_json::json!({
-                "error": "Gonka Router Unreachable",
-                "message": "Failed to receive valid response from Gonka Router AI models. Please try again."
-            })),
-        ));
-    }
-
-    let mut response = ConsensusEngine::calculate_consensus(&claim_prompt, successful_models);
+    let Json(mut response) = verify_claim_handler(State(state), headers, ConnectInfo(addr), Json(verify_req)).await?;
     response.is_video = Some(true);
     response.video_platform = Some(meta.platform);
     response.spoken_transcript = Some(spoken_text);
