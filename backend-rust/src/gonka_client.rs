@@ -13,7 +13,7 @@ impl GonkaClient {
         Self {
             base_url: "https://api.gonkarouter.io/v1".to_string(),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(std::time::Duration::from_secs(35))
                 .build()
                 .unwrap_or_default(),
         }
