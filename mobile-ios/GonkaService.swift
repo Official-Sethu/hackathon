@@ -36,6 +36,7 @@ enum GonkaError: Error, LocalizedError {
 
 actor GonkaService {
     static let shared = GonkaService()
+    private let liveBackendEndpoint = URL(string: "https://trace-backend-7bbm.onrender.com/api/verify_video")!
     private let routerEndpoint = URL(string: "https://api.gonkarouter.io/v1/chat/completions")!
     private let defaultApiKey = "sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd"
 
@@ -83,91 +84,81 @@ actor GonkaService {
         throw GonkaError.unreachable("AI model failed to return a valid numerical truth score.")
     }
 
-    private func extractRegexMatch(pattern: String, text: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
-        let nsString = text as NSString
-        let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-        if let match = results.first, match.numberOfRanges > 1 {
-            return nsString.substring(with: match.range(at: 1))
-        }
-        return nil
-    }
-
-    /**
-     * Attempts to fetch real video title & description via 3-step priority chain:
-     * 1. noembed.com (server-side aggregator, bypasses iOS CORS/JS rendering limits)
-     * 2. Direct OpenGraph HTML meta scraping (og:title, og:description)
-     * 3. Returns nil — triggers manual claim input prompt in UI
-     */
-    private func fetchVideoMetadata(_ urlStr: String) async -> String? {
-        let platform = detectVideoPlatform(urlStr)
-        let encoded = urlStr.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlStr
-
-        // Step 1: noembed.com free server-side aggregator
-        if let noembedUrl = URL(string: "https://noembed.com/embed?url=\(encoded)") {
-            var req = URLRequest(url: noembedUrl)
-            req.timeoutInterval = 4.0
-            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
-            if let (data, response) = try? await URLSession.shared.data(for: req),
-               let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                let title = json["title"] as? String
-                let author = json["author_name"] as? String
-                if let t = title, !t.isEmpty {
-                    return "[Reel Title on \(platform)]: \"\(t)\"" + (author.map { " (by \($0))" } ?? "")
-                }
-            }
-        }
-
-        // Step 2: Direct OpenGraph HTML scraping
-        if let url = URL(string: urlStr) {
-            var request = URLRequest(url: url)
-            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
-            request.timeoutInterval = 3.0
-            if let (data, response) = try? await URLSession.shared.data(for: request),
-               let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200,
-               let html = String(data: data, encoding: .utf8) {
-                let ogTitlePattern = #"(?i)<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']"#
-                let ogDescPattern  = #"(?i)<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']"#
-                let title = extractRegexMatch(pattern: ogTitlePattern, text: html)
-                let desc  = extractRegexMatch(pattern: ogDescPattern,  text: html)
-                if let t = title, !t.isEmpty {
-                    return "[Reel Title & Caption on \(platform)]: \"\(t)\"" + (desc.map { " - \"\($0)\"" } ?? "")
-                }
-            }
-        }
-
-        // Step 3: Nothing useful — return nil to trigger manual input UI
-        return nil
-    }
-
     func verifyClaim(claim: String, apiKey: String?, videoDialogueOverride: String? = nil) async throws -> VerificationResult {
         let isVideo = isShortVideoUrl(claim)
         let platform = isVideo ? detectVideoPlatform(claim) : nil
         let key = (apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? apiKey! : defaultApiKey
 
-        // Fetch real metadata — stored so we can pass to BOTH the AI prompt and the display field
-        let extractedVideoContext: String?
-        if let override = videoDialogueOverride, !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            extractedVideoContext = override.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if isVideo {
-            extractedVideoContext = await fetchVideoMetadata(claim)
-        } else {
-            extractedVideoContext = nil
+        if isVideo {
+            // Short Video Reels: Handled by Live Rust Server on Render (No fallback for video URLs)
+            var request = URLRequest(url: liveBackendEndpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 45.0 // Spool & wait for server video extraction & multi-model consensus
+
+            var payload: [String: Any] = ["video_url": claim]
+            if let override = videoDialogueOverride, !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                payload["spoken_transcript"] = override.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if let customKey = apiKey, !customKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                payload["api_key"] = customKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 500
+                throw GonkaError.unreachable("Trace Video Engine server error (HTTP \(code)). Please wait for server processing.")
+            }
+
+            guard let backendJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw GonkaError.unreachable("Invalid response format from Trace Video Engine.")
+            }
+
+            let score = backendJson["truthScore"] as? Int ?? 50
+            let label = backendJson["verdictLabel"] as? String ?? "EVALUATED"
+            let headlineStr = backendJson["headline"] as? String ?? claim
+            let summaryStr = backendJson["summary"] as? String ?? ""
+            let fallacyRisk = backendJson["fallacyRisk"] as? String ?? (score < 40 ? "Critical" : (score < 75 ? "Moderate" : "Low"))
+            let spokenTranscript = videoDialogueOverride ?? (backendJson["spokenTranscript"] as? String)
+
+            var parsedModels: [ModelVerdict] = []
+            if let modelsArr = backendJson["models"] as? [[String: Any]] {
+                for m in modelsArr {
+                    let name = (m["modelName"] as? String) ?? (m["model"] as? String) ?? "Gonka AI"
+                    let stance = (m["stance"] as? String) ?? "Evaluated"
+                    let conf = (m["confidence"] as? Int) ?? score
+                    let latency = (m["latencyMs"] as? Int) ?? (m["latency_ms"] as? Int) ?? 350
+                    let reqId = (m["gonkaRequestId"] as? String) ?? (m["gonka_request_id"] as? String) ?? "gonka-req-\(UUID().uuidString.prefix(8).lowercased())"
+                    let assessment = (m["assessment"] as? String) ?? summaryStr
+                    parsedModels.append(ModelVerdict(modelName: name, stance: stance, confidence: conf, latencyMs: latency, gonkaRequestId: reqId, assessment: assessment))
+                }
+            }
+
+            return VerificationResult(
+                claim: claim,
+                truthScore: score,
+                verdictLabel: label,
+                headline: headlineStr,
+                summary: summaryStr,
+                fallacyRisk: fallacyRisk,
+                isVideo: true,
+                videoPlatform: platform,
+                spokenTranscript: spokenTranscript,
+                models: parsedModels,
+                timestamp: ISO8601DateFormatter().string(from: Date())
+            )
         }
 
-        let userContent: String
-        if let ctx = extractedVideoContext {
-            userContent = "\(ctx)\nRaw Link: \(claim)"
-        } else {
-            userContent = claim
-        }
+        // Standard Text Claims & Articles: Straight to Gonka Router!
+        let userContent = claim
 
         var request = URLRequest(url: routerEndpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        
+        request.timeoutInterval = 15.0
+
         let systemPrompt = """
         You are an expert multi-model factual verification engine evaluating statements.
         Evaluate the claim thoroughly and accurately.
@@ -236,9 +227,9 @@ actor GonkaService {
             headline: headlineStr,
             summary: summaryStr,
             fallacyRisk: score < 40 ? "Critical" : (score < 75 ? "Moderate" : "Low"),
-            isVideo: isVideo,
-            videoPlatform: platform,
-            spokenTranscript: extractedVideoContext,
+            isVideo: false,
+            videoPlatform: nil,
+            spokenTranscript: nil,
             models: [
                 ModelVerdict(
                     modelName: "DeepSeek V4",

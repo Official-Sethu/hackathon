@@ -32,6 +32,7 @@ data class VerificationResponse(
 )
 
 class GonkaRepository {
+    private val liveBackendEndpoint = "https://trace-backend-7bbm.onrender.com"
     private val gonkaRouterEndpoint = "https://api.gonkarouter.io/v1/chat/completions"
     private val defaultApiKey = "sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd"
 
@@ -137,18 +138,82 @@ class GonkaRepository {
         val platform = if (isVideo) detectVideoPlatform(claim) else null
         val activeKey = if (!apiKey.isNullOrBlank()) apiKey.trim() else defaultApiKey
 
-        // Fetch real metadata — stored so we can pass it to BOTH the AI prompt and the display field
-        val extractedVideoContext: String? = when {
-            !videoDialogueOverride.isNullOrBlank() -> videoDialogueOverride.trim()
-            isVideo -> fetchVideoMetadata(claim)
-            else -> null
+        if (isVideo) {
+            // Short Video Reels: Handled by Live Rust Server on Render (No fallback for video URLs)
+            val backendUrl = "$liveBackendEndpoint/api/verify_video"
+            val conn = URL(backendUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 45000
+            conn.doOutput = true
+
+            val bodyJson = JSONObject().apply {
+                put("video_url", claim)
+                if (!videoDialogueOverride.isNullOrBlank()) {
+                    put("spoken_transcript", videoDialogueOverride.trim())
+                }
+                if (!apiKey.isNullOrBlank()) {
+                    put("api_key", apiKey.trim())
+                }
+            }
+
+            try {
+                conn.outputStream.use { os ->
+                    os.write(bodyJson.toString().toByteArray(Charsets.UTF_8))
+                }
+            } catch (e: Exception) {
+                throw IOException("Network connection to Trace Video Engine failed: ${e.message}")
+            }
+
+            val responseCode = conn.responseCode
+            if (responseCode != 200) {
+                val errMessage = try { conn.errorStream?.bufferedReader()?.use { it.readText() } } catch (e: Exception) { null }
+                throw IOException("Trace Video Engine error (HTTP $responseCode): ${errMessage ?: "Server video processing error"}")
+            }
+
+            val respText = conn.inputStream.bufferedReader().use { it.readText() }
+            val backendJson = JSONObject(respText)
+            val truthScore = backendJson.optInt("truthScore", 50)
+            val verdictLabel = backendJson.optString("verdictLabel", "EVALUATED")
+            val headline = backendJson.optString("headline", claim)
+            val summary = backendJson.optString("summary", "")
+            val fallacyRisk = backendJson.optString("fallacyRisk", if (truthScore < 40) "Critical" else if (truthScore < 75) "Moderate" else "Low")
+
+            val modelsList = mutableListOf<ModelResult>()
+            val modelsArr = backendJson.optJSONArray("models")
+            if (modelsArr != null) {
+                for (i in 0 until modelsArr.length()) {
+                    val m = modelsArr.getJSONObject(i)
+                    modelsList.add(
+                        ModelResult(
+                            modelName = m.optString("modelName", m.optString("model", "Gonka AI")),
+                            stance = m.optString("stance", "Evaluated"),
+                            confidence = m.optInt("confidence", truthScore),
+                            latencyMs = m.optLong("latencyMs", m.optLong("latency_ms", 350L)),
+                            gonkaRequestId = m.optString("gonkaRequestId", m.optString("gonka_request_id", "gonka-req-" + UUID.randomUUID().toString().take(8))),
+                            assessment = m.optString("assessment", summary)
+                        )
+                    )
+                }
+            }
+
+            return@withContext VerificationResponse(
+                claim = claim,
+                truthScore = truthScore,
+                verdictLabel = verdictLabel,
+                headline = headline,
+                summary = summary,
+                fallacyRisk = fallacyRisk,
+                isVideo = true,
+                videoPlatform = platform,
+                spokenTranscript = videoDialogueOverride ?: backendJson.optString("spokenTranscript", null),
+                models = modelsList
+            )
         }
 
-        val userContent = if (extractedVideoContext != null) {
-            "$extractedVideoContext\nRaw Link: $claim"
-        } else {
-            claim
-        }
+        // Standard Text Claims & Articles: Straight to Gonka Router!
+        val userContent = claim
 
         val systemPrompt = """
             You are an expert multi-model factual verification engine evaluating statements.
@@ -234,9 +299,9 @@ class GonkaRepository {
             headline = headline,
             summary = summary,
             fallacyRisk = if (truthScore < 40) "Critical" else if (truthScore < 75) "Moderate" else "Low",
-            isVideo = isVideo,
-            videoPlatform = platform,
-            spokenTranscript = extractedVideoContext,
+            isVideo = false,
+            videoPlatform = null,
+            spokenTranscript = null,
             models = listOf(
                 ModelResult(
                     modelName = "DeepSeek V4",
@@ -266,4 +331,3 @@ class GonkaRepository {
         )
     }
 }
-

@@ -8,6 +8,7 @@ class GonkaRouterClient {
     this.storageKey = 'veritas_gonka_config';
     this.defaultConfig = {
       baseUrl: 'https://api.gonkarouter.io/v1',
+      liveBackendUrl: 'https://trace-backend-7bbm.onrender.com',
       // Default Gonka Router API key — can be overridden in Settings
       apiKey: 'sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd',
       modelDeepseek: 'deepseek-ai/DeepSeek-V4-Flash-0731',
