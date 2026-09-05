@@ -61,6 +61,11 @@ fun FactCheckScreen(repository: GonkaRepository = remember { GonkaRepository() }
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
+    // Warm up backend container silently on launch to prevent cold-start delays for video verification
+    LaunchedEffect(Unit) {
+        repository.warmupBackend()
+    }
+
     fun getActiveInput(): String = when (activeTab) {
         1 -> urlInput
         2 -> videoUrlInput

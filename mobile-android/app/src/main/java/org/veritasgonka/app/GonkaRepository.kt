@@ -55,6 +55,19 @@ class GonkaRepository {
     private val backendBase = "https://trace-backend-7bbm.onrender.com"
     private val defaultApiKey = "sk-PxMSYFiyuDP14zSxvfyBNUpqwIP46ARYjyJr2RCnBtn15Dxd"
 
+    suspend fun warmupBackend() = withContext(Dispatchers.IO) {
+        try {
+            val conn = URL("$backendBase/health").openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Connection", "close")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.responseCode // Triggers background connection to wake up Render container
+        } catch (e: Exception) {
+            // Silent warm-up ping
+        }
+    }
+
     fun isShortVideoUrl(urlStr: String): Boolean {
         val lower = urlStr.trim().lowercase()
         return lower.contains("vt.tiktok.com") ||

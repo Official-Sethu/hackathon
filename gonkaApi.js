@@ -16,6 +16,15 @@ class GonkaRouterClient {
       modelKimi: 'deepseek-ai/DeepSeek-V4-Flash-0731'
     };
     this.config = this.loadConfig();
+    this.warmupBackend();
+  }
+
+  warmupBackend() {
+    try {
+      if (typeof fetch !== 'undefined' && this.config.liveBackendUrl) {
+        fetch(`${this.config.liveBackendUrl.replace(/\/+$/, '')}/health`, { method: 'GET' }).catch(() => {});
+      }
+    } catch (e) {}
   }
 
   loadConfig() {
