@@ -91,107 +91,123 @@ impl GonkaClient {
                     .map(|s| s.to_string());
 
                 if status.is_success() {
-                    if let Ok(json_resp) = resp.json::<serde_json::Value>().await {
-                        let content = json_resp["choices"][0]["message"]["content"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        let body_req_id = json_resp["id"].as_str().map(|s| s.to_string());
-                        let req_id = header_req_id
-                            .or(body_req_id)
-                            .unwrap_or_else(|| Self::generate_request_id(prefix));
-                        let tokens = json_resp["usage"]["total_tokens"].as_u64().unwrap_or(400) as u32;
+                    match resp.text().await {
+                        Ok(raw_text) => {
+                            if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&raw_text) {
+                                let content = json_resp["choices"][0]["message"]["content"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .to_string();
+                                let body_req_id = json_resp["id"].as_str().map(|s| s.to_string());
+                                let req_id = header_req_id
+                                    .or(body_req_id)
+                                    .unwrap_or_else(|| Self::generate_request_id(prefix));
+                                let tokens = json_resp["usage"]["total_tokens"].as_u64().unwrap_or(400) as u32;
 
-                        // Parse raw JSON emitted by AI
-                        let cleaned = content.replace("```json", "").replace("```", "");
-                        let parsed: Option<serde_json::Value> = serde_json::from_str(cleaned.trim()).ok();
+                                // Parse raw JSON emitted by AI
+                                let cleaned = content.replace("```json", "").replace("```", "");
+                                let parsed: Option<serde_json::Value> = serde_json::from_str(cleaned.trim()).ok();
 
-                        let truth_score = parsed.as_ref()
-                            .and_then(|p| p.get("truthScore"))
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32);
+                                let truth_score = parsed.as_ref()
+                                    .and_then(|p| p.get("truthScore"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as u32);
 
-                        let verdict = parsed.as_ref()
-                            .and_then(|p| p.get("verdict"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                                let verdict = parsed.as_ref()
+                                    .and_then(|p| p.get("verdict"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
 
-                        let headline = parsed.as_ref()
-                            .and_then(|p| p.get("headline"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                                let headline = parsed.as_ref()
+                                    .and_then(|p| p.get("headline"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
 
-                        let summary = parsed.as_ref()
-                            .and_then(|p| p.get("summary"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                                let summary = parsed.as_ref()
+                                    .and_then(|p| p.get("summary"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
 
-                        let stance = parsed.as_ref()
-                            .and_then(|p| p.get("stance"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "Evaluated".to_string());
+                                let stance = parsed.as_ref()
+                                    .and_then(|p| p.get("stance"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| "Evaluated".to_string());
 
-                        let confidence = parsed.as_ref()
-                            .and_then(|p| p.get("confidence"))
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32)
-                            .unwrap_or(90);
+                                let confidence = parsed.as_ref()
+                                    .and_then(|p| p.get("confidence"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as u32)
+                                    .unwrap_or(90);
 
-                        let assessment = parsed.as_ref()
-                            .and_then(|p| p.get("assessment"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| content.clone());
+                                let assessment = parsed.as_ref()
+                                    .and_then(|p| p.get("assessment"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| content.clone());
 
-                        let fallacies = parsed.as_ref()
-                            .and_then(|p| p.get("fallacies"))
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect());
+                                let fallacies = parsed.as_ref()
+                                    .and_then(|p| p.get("fallacies"))
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect());
 
-                        let citations = parsed.as_ref()
-                            .and_then(|p| p.get("citations"))
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter().filter_map(|item| {
-                                    let t = item.get("title")?.as_str()?.to_string();
-                                    let u = item.get("url")?.as_str()?.to_string();
-                                    Some(CitationSource { title: t, url: u })
-                                }).collect()
-                            });
+                                let citations = parsed.as_ref()
+                                    .and_then(|p| p.get("citations"))
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter().filter_map(|item| {
+                                            let t = item.get("title")?.as_str()?.to_string();
+                                            let u = item.get("url")?.as_str()?.to_string();
+                                            Some(CitationSource { title: t, url: u })
+                                        }).collect()
+                                    });
 
-                        let reasoning_steps = parsed.as_ref()
-                            .and_then(|p| p.get("reasoningSteps"))
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter().enumerate().filter_map(|(idx, item)| {
-                                    let t = item.get("title")?.as_str()?.to_string();
-                                    let d = item.get("desc").or_else(|| item.get("description"))?.as_str()?.to_string();
-                                    Some(ReasoningStep { step: (idx + 1) as u32, title: t, description: d })
-                                }).collect()
-                            });
+                                let reasoning_steps = parsed.as_ref()
+                                    .and_then(|p| p.get("reasoningSteps"))
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter().enumerate().filter_map(|(idx, item)| {
+                                            let t = item.get("title")?.as_str()?.to_string();
+                                            let d = item.get("desc").or_else(|| item.get("description"))?.as_str()?.to_string();
+                                            Some(ReasoningStep { step: (idx + 1) as u32, title: t, description: d })
+                                        }).collect()
+                                    });
 
-                        return Ok(ModelResult {
-                            model: model_name.to_string(),
-                            stance,
-                            confidence,
-                            latency_ms: latency,
-                            tokens_used: tokens,
-                            gonka_request_id: req_id,
-                            assessment,
-                            truth_score,
-                            verdict,
-                            headline,
-                            summary,
-                            fallacies,
-                            citations,
-                            reasoning_steps,
-                        });
+                                return Ok(ModelResult {
+                                    model: model_name.to_string(),
+                                    stance,
+                                    confidence,
+                                    latency_ms: latency,
+                                    tokens_used: tokens,
+                                    gonka_request_id: req_id,
+                                    assessment,
+                                    truth_score,
+                                    verdict,
+                                    headline,
+                                    summary,
+                                    fallacies,
+                                    citations,
+                                    reasoning_steps,
+                                });
+                            } else {
+                                tracing::warn!("Failed to parse JSON response for model {}: {}", model_name, raw_text);
+                                return Err(format!("Invalid JSON returned by Gonka Router for model {}", model_name));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to read response body for model {}: {}", model_name, e);
+                            return Err(format!("Failed to read response body for model {}", model_name));
+                        }
                     }
                 }
-                Err(format!("Gonka Router responded with HTTP {}", status))
+                let err_text = resp.text().await.unwrap_or_default();
+                tracing::warn!("Gonka Router returned HTTP status {} for model {}: {}", status, model_name, err_text);
+                Err(format!("Gonka Router responded with HTTP {} for model {}", status, model_name))
             }
-            Err(e) => Err(format!("Network failure reaching Gonka Router: {}", e)),
+            Err(e) => {
+                tracing::warn!("Network failure reaching Gonka Router for model {}: {}", model_name, e);
+                Err(format!("Network failure reaching Gonka Router: {}", e))
+            }
         }
     }
 }
