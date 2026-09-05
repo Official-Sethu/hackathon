@@ -88,7 +88,10 @@ impl WebSearcher {
     }
 
     async fn fetch_jina(&self, query: &str) -> Vec<SearchResult> {
-        // Jina AI Search — free, no API key, returns top web results as JSON
+        // Jina AI Search — authenticated via API key
+        let api_key = std::env::var("JINA_API_KEY")
+            .unwrap_or_else(|_| "jina_84df555388c9499ebed7089382a7f7a6o5d1xn5K4fd4AiKIHSNPdRFxXV-7".to_string());
+
         let encoded_query = query
             .chars()
             .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
@@ -99,14 +102,17 @@ impl WebSearcher {
 
         let url = format!("https://s.jina.ai/?q={}", encoded_query);
 
-        match self
+        let mut req = self
             .client
             .get(&url)
             .header("Accept", "application/json")
-            .header("X-Respond-With", "no-content")
-            .send()
-            .await
-        {
+            .header("X-Respond-With", "no-content");
+
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        match req.send().await {
             Ok(resp) if resp.status().is_success() => {
                 match resp.json::<JinaResponse>().await {
                     Ok(jina) => jina
