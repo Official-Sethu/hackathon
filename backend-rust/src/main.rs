@@ -123,7 +123,7 @@ async fn error_404_handler() -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        include_str!("../../404.html"),
+        include_str!("../404.html"),
     )
 }
 
@@ -131,7 +131,7 @@ async fn error_429_handler() -> impl IntoResponse {
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        include_str!("../../429.html"),
+        include_str!("../429.html"),
     )
 }
 
@@ -139,7 +139,7 @@ async fn error_500_handler() -> impl IntoResponse {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        include_str!("../../500.html"),
+        include_str!("../500.html"),
     )
 }
 

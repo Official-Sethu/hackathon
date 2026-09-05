@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Something Went Wrong | VeritasGonka</title>
+  <meta name="description" content="A temporary hiccup on our end. The fact checker will be back shortly.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    :root {
+      --bg: #F8F9FA; --card: #FFFFFF; --border: #E5E7EB;
+      --text: #111827; --muted: #6B7280; --sub: #4B5563;
+      --red: #DC2626; --red-bg: #FEF2F2; --red-border: #FECACA;
+      --sans: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      --serif: 'Newsreader', Georgia, serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
+    .topbar { background: #0F172A; color: #94A3B8; font-size: 0.75rem; padding: 8px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .wrap { max-width: 580px; margin: 64px auto; padding: 0 20px; text-align: center; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 52px 36px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .emoji { font-size: 3.5rem; margin-bottom: 16px; display: block; line-height: 1; }
+    h1 { font-family: var(--serif); font-size: 2rem; font-weight: 400; margin-bottom: 10px; line-height: 1.3; }
+    .sub { color: var(--sub); font-size: 0.95rem; margin-bottom: 24px; line-height: 1.6; }
+    .steps-box { background: #F8FAFC; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 28px; text-align: left; font-size: 0.84rem; color: var(--sub); line-height: 1.7; }
+    .steps-box strong { color: var(--text); display: block; margin-bottom: 6px; }
+    .steps-box ol { padding-left: 18px; }
+    .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    a.btn-primary, button.btn-secondary { font-family: var(--sans); font-size: 0.9rem; font-weight: 600; padding: 11px 22px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; transition: all 0.18s ease; cursor: pointer; }
+    a.btn-primary { background: #0F172A; color: #fff; border: none; }
+    a.btn-primary:hover { background: #334155; }
+    button.btn-secondary { background: transparent; color: var(--sub); border: 1px solid var(--border); }
+    button.btn-secondary:hover { background: #F3F4F6; color: var(--text); }
+    .foot { text-align: center; padding: 20px; font-size: 0.78rem; color: var(--muted); border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span>VERITASGONKA · FREE FACT CHECKER</span>
+    <span>Recovering…</span>
+  </div>
+
+  <main class="wrap">
+    <div class="card">
+      <h1>Oops something went wrong on our end...:(</h1>
+      <p class="sub">
+        The AI systems hit a temporary glitch. This isn't your fault at all it's ours, and we're on it. Usually it fixes itself within a minute.
+      </p>
+
+      <div class="steps-box">
+        <strong>Here's what you can try right now:</strong>
+        <ol>
+          <li>Hit the <strong>"Try Again"</strong> button below most of the time that's all it takes.</li>
+          <li>Wait about 30 seconds, then head back and re-enter your claim.</li>
+          <li>If it keeps happening, the AI network might be having a brief outage. Check back in a few minutes.</li>
+        </ol>
+      </div>
+
+      <div class="btns">
+        <a href="index.html" class="btn-primary">
+          <i class="fa-solid fa-house"></i> Back to Fact Checker
+        </a>
+        <button class="btn-secondary" onclick="window.history.back();">
+          <i class="fa-solid fa-rotate"></i> Try Again
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="foot">
+    VeritasGonka Free AI Fact Checker for Everyone
+  </footer>
+</body>
+</html>
