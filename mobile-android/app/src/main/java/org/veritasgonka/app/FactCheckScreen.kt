@@ -76,16 +76,6 @@ fun FactCheckScreen(repository: GonkaRepository = remember { GonkaRepository() }
         coroutineScope.launch {
             try {
                 val override = videoDialogueOverride.trim().ifBlank { null }
-                // First check if we can get metadata (if video URL and no override)
-                if (activeTab == 2 && override == null) {
-                    val meta = repository.fetchVideoMetadata(input)
-                    if (meta == null) {
-                        // Cannot extract content — prompt user to type the claim
-                        needsManualClaim = true
-                        isLoading = false
-                        return@launch
-                    }
-                }
                 result = repository.verifyClaim(input, videoDialogueOverride = override)
             } catch (e: Exception) {
                 errorMessage = "Rate limit or network issue. Please wait a moment and try again."
